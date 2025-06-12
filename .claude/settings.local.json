@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws cloudwatch describe-alarms:*)",
+      "Bash(aws cloudwatch:*)",
+      "Bash(jq:*)",
+      "Bash(cat:*)",
+      "Bash(aws ec2 describe-instances:*)",
+      "Bash(aws logs:*)"
+    ],
+    "deny": []
+  }
+}
