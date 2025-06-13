@@ -9,6 +9,7 @@ CORS(app)
 
 codepipeline = boto3.client('codepipeline')
 codebuild = boto3.client('codebuild')
+codestar_connections = boto3.client('codestar-connections')
 
 @app.route('/api/pipelines', methods=['POST'])
 def create_pipelines():
@@ -27,6 +28,24 @@ def create_pipelines():
             
             # Get default values from frontend or use defaults
             defaults = pipeline_config.get('defaults', {})
+            
+            # Get the correct CodeStar connection ARN
+            connection_name = defaults.get('codestar_connection_name', 'github-connections')
+            connection_arn = None
+            
+            try:
+                connections = codestar_connections.list_connections()
+                for conn in connections.get('Connections', []):
+                    if conn.get('ConnectionName') == connection_name:
+                        connection_arn = conn.get('ConnectionArn')
+                        break
+                
+                if not connection_arn:
+                    raise ValueError(f"CodeStar connection '{connection_name}' not found")
+            except Exception as e:
+                print(f"Error getting connection: {e}")
+                # Fallback to constructed ARN (may not work)
+                connection_arn = f"arn:aws:codestar-connections:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:connection/{connection_name}"
             
             # Create CodeBuild project first
             codebuild_project_name = f"{pipeline_name}-build"
@@ -89,7 +108,7 @@ def create_pipelines():
                                     },
                                     'runOrder': 1,
                                     'configuration': {
-                                        'ConnectionArn': f"arn:aws:codestar-connections:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:connection/{defaults.get('codestar_connection_name', 'github-connections')}",
+                                        'ConnectionArn': connection_arn,
                                         'FullRepositoryId': repo_name,
                                         'BranchName': branch_name,
                                         'OutputArtifactFormat': 'CODE_ZIP'
@@ -145,11 +164,29 @@ def create_pipelines():
                 pass
             
             # Create the pipeline
-            response = codepipeline.create_pipeline(**pipeline)
-            created_pipelines.append({
-                'pipelineName': pipeline_name,
-                'pipelineArn': response['pipeline']['arn']
-            })
+            try:
+                response = codepipeline.create_pipeline(**pipeline)
+                # Extract pipeline ARN from response
+                pipeline_arn = response.get('pipeline', {}).get('arn')
+                if not pipeline_arn:
+                    # Construct ARN if not in response
+                    pipeline_arn = f"arn:aws:codepipeline:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:pipeline/{pipeline_name}"
+                
+                created_pipelines.append({
+                    'pipelineName': pipeline_name,
+                    'pipelineArn': pipeline_arn,
+                    'status': 'created'
+                })
+            except Exception as pipeline_error:
+                # If pipeline already exists, try to update it
+                if 'already exists' in str(pipeline_error):
+                    created_pipelines.append({
+                        'pipelineName': pipeline_name,
+                        'pipelineArn': f"arn:aws:codepipeline:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:pipeline/{pipeline_name}",
+                        'status': 'already_exists'
+                    })
+                else:
+                    raise pipeline_error
         
         return jsonify({
             'success': True,

@@ -14,13 +14,13 @@ const defaultDefaults: DefaultValues = {
   build_owner: 'AWS',
   build_provider: 'CodeBuild',
   build_version: 1,
-  codepipeline_role: 'staging-codepipeline-role',
+  codepipeline_role: 'service-role/AWSCodePipelineServiceRole-ap-south-1-staging-mention',
   build_env_image: 'aws/codebuild/amazonlinux-x86_64-standard:5.0',
   build_env_type: 'LINUX_CONTAINER',
   build_privileged_mode: true,
   image_pull_credentials_type: 'CODEBUILD',
-  codebuild_role: 'staging-codebuild-role',
-  codebuild_sg: 'staging_codebuild_sg',
+  codebuild_role: 'service-role/codebuild-prod-api-build-service-role',
+  codebuild_sg: '',
 };
 
 const PipelineForm: React.FC = () => {
@@ -91,7 +91,10 @@ const PipelineForm: React.FC = () => {
       });
 
       if (response.data.success) {
-        setMessage(`Successfully created ${response.data.pipelines.length} pipeline(s)!`);
+        const createdPipelines = response.data.pipelines.map((p: any) => 
+          `${p.pipelineName} (${p.status || 'created'})`
+        ).join(', ');
+        setMessage(`Successfully processed ${response.data.pipelines.length} pipeline(s): ${createdPipelines}`);
         setPipelines([{
           pipelineName: '',
           repositoryName: '',
