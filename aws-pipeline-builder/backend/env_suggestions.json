@@ -1,0 +1,16 @@
+{
+  "APPSETTINGS_REPO": [
+    "modernization-appsettings-repo"
+  ],
+  "CLUSTER_ROLE_ARN": [],
+  "DOCKER_REPO_DIR": [],
+  "MANIFEST_REPO": [
+    "modernization",
+    "cmo"
+  ],
+  "SMCREDS": [
+    "Database",
+    "cmo-secrets",
+    "newzverse-secrets"
+  ]
+}

@@ -3,11 +3,33 @@ export interface EnvironmentVariable {
   value: string;
 }
 
+export interface BuildspecPhases {
+  install?: {
+    commands: string[];
+  };
+  pre_build?: {
+    commands: string[];
+  };
+  build?: {
+    commands: string[];
+  };
+  post_build?: {
+    commands: string[];
+  };
+}
+
+export interface BuildspecConfig {
+  version: number;
+  phases: BuildspecPhases;
+}
+
 export interface PipelineConfig {
   pipelineName: string;
   repositoryName: string;
   branchName: string;
   buildspecPath: string;
+  useBuildspecFile: boolean;
+  buildspec?: BuildspecConfig;
   computeType: string;
   environmentVariables: EnvironmentVariable[];
 }

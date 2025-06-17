@@ -4,15 +4,26 @@ import boto3
 import json
 from datetime import datetime
 
+# Initialize Flask application with CORS support for cross-origin requests
 app = Flask(__name__)
 CORS(app)
 
-codepipeline = boto3.client('codepipeline')
-codebuild = boto3.client('codebuild')
-codestar_connections = boto3.client('codestar-connections')
+# Initialize AWS service clients with ap-south-1 region
+codepipeline = boto3.client('codepipeline', region_name='ap-south-1')
+codebuild = boto3.client('codebuild', region_name='ap-south-1')
+codestar_connections = boto3.client('codestar-connections', region_name='ap-south-1')
+ecr = boto3.client('ecr', region_name='ap-south-1')
 
 @app.route('/api/pipelines', methods=['POST'])
 def create_pipelines():
+    """
+    Create multiple AWS CodePipeline pipelines in batch.
+    Each pipeline includes:
+    - ECR repository for Docker images
+    - CodeBuild project for building the application
+    - CodePipeline with Source and Build stages
+    - S3 bucket for pipeline artifacts
+    """
     try:
         data = request.json
         pipelines = data.get('pipelines', [])
@@ -23,13 +34,15 @@ def create_pipelines():
             repo_name = pipeline_config['repositoryName']
             branch_name = pipeline_config['branchName']
             buildspec_path = pipeline_config['buildspecPath']
+            use_buildspec_file = pipeline_config.get('useBuildspecFile', True)
+            buildspec_content = pipeline_config.get('buildspec', None)
             compute_type = pipeline_config['computeType']
             env_vars = pipeline_config.get('environmentVariables', [])
             
             # Get default values from frontend or use defaults
             defaults = pipeline_config.get('defaults', {})
             
-            # Get the correct CodeStar connection ARN
+            # Get the correct CodeStar connection ARN for GitHub integration
             connection_name = defaults.get('codestar_connection_name', 'github-connections')
             connection_arn = None
             
@@ -45,16 +58,38 @@ def create_pipelines():
             except Exception as e:
                 print(f"Error getting connection: {e}")
                 # Fallback to constructed ARN (may not work)
-                connection_arn = f"arn:aws:codestar-connections:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:connection/{connection_name}"
+                connection_arn = f"arn:aws:codestar-connections:ap-south-1:{boto3.client('sts').get_caller_identity()['Account']}:connection/{connection_name}"
             
-            # Create CodeBuild project first
+            # Create ECR repository with the pipeline name for storing Docker images
+            try:
+                ecr.create_repository(
+                    repositoryName=pipeline_name,
+                    imageScanningConfiguration={
+                        'scanOnPush': True
+                    }
+                )
+                print(f"Created ECR repository: {pipeline_name}")
+            except ecr.exceptions.RepositoryAlreadyExistsException:
+                print(f"ECR repository {pipeline_name} already exists")
+            except Exception as e:
+                print(f"Error creating ECR repository: {e}")
+            
+            # Create CodeBuild project for building and pushing Docker images
             codebuild_project_name = f"{pipeline_name}-build"
+            
+            # Prepare buildspec - support both file path reference and inline YAML content
+            if use_buildspec_file:
+                buildspec = buildspec_path
+            else:
+                # Convert the buildspec object to YAML format
+                import yaml
+                buildspec = yaml.dump(buildspec_content, default_flow_style=False)
             
             build_project = {
                 'name': codebuild_project_name,
                 'source': {
                     'type': 'CODEPIPELINE',
-                    'buildspec': buildspec_path
+                    'buildspec': buildspec
                 },
                 'artifacts': {
                     'type': 'CODEPIPELINE'
@@ -67,13 +102,16 @@ def create_pipelines():
                     'imagePullCredentialsType': defaults.get('image_pull_credentials_type', 'CODEBUILD'),
                     'environmentVariables': [
                         {'name': var['name'], 'value': var['value'], 'type': 'PLAINTEXT'} 
-                        for var in env_vars
+                        for var in env_vars if var.get('value', '').strip()  # Only include env vars with values
+                    ] + [
+                        {'name': 'SERVICE_NAME', 'value': pipeline_name, 'type': 'PLAINTEXT'},
+                        {'name': 'ECR_REPO_URI', 'value': f"465105616690.dkr.ecr.ap-south-1.amazonaws.com/{pipeline_name}", 'type': 'PLAINTEXT'}
                     ]
                 },
                 'serviceRole': f"arn:aws:iam::{boto3.client('sts').get_caller_identity()['Account']}:role/{defaults.get('codebuild_role', 'staging-codebuild-role')}"
             }
             
-            # Add VPC config if security group is provided
+            # Add VPC config if security group is provided for private subnet builds
             if defaults.get('codebuild_sg'):
                 build_project['vpcConfig'] = {
                     'securityGroupIds': [defaults.get('codebuild_sg')]
@@ -85,7 +123,7 @@ def create_pipelines():
                 # Update existing project
                 codebuild.update_project(**build_project)
             
-            # Create Pipeline
+            # Create CodePipeline configuration with Source and Build stages
             pipeline = {
                 'pipeline': {
                     'name': pipeline_name,
@@ -153,7 +191,7 @@ def create_pipelines():
                 }
             }
             
-            # Create S3 bucket for artifacts
+            # Create S3 bucket for storing pipeline artifacts with unique timestamp
             s3 = boto3.client('s3')
             try:
                 s3.create_bucket(
@@ -163,7 +201,7 @@ def create_pipelines():
             except s3.exceptions.BucketAlreadyExists:
                 pass
             
-            # Create the pipeline
+            # Create the pipeline in AWS CodePipeline
             try:
                 response = codepipeline.create_pipeline(**pipeline)
                 # Extract pipeline ARN from response
@@ -201,6 +239,10 @@ def create_pipelines():
 
 @app.route('/api/pipelines', methods=['GET'])
 def list_pipelines():
+    """
+    List all existing AWS CodePipeline pipelines in the configured region.
+    Returns pipeline names and metadata.
+    """
     try:
         response = codepipeline.list_pipelines()
         return jsonify({
@@ -215,7 +257,95 @@ def list_pipelines():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
+    """
+    Health check endpoint to verify the backend service is running.
+    Used by frontend to check connectivity.
+    """
     return jsonify({'status': 'healthy'})
 
+# Environment variable suggestions endpoints
+import os
+
+SUGGESTIONS_FILE = 'env_suggestions.json'
+
+def load_suggestions():
+    """
+    Load environment variable suggestions from JSON file.
+    Falls back to default suggestions if file doesn't exist.
+    Returns dict with env var names as keys and suggestion lists as values.
+    """
+    if os.path.exists(SUGGESTIONS_FILE):
+        try:
+            with open(SUGGESTIONS_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    # Return default suggestions
+    return {
+        'SMCREDS': ['Database', 'cmo-secrets', 'newzverse-secrets'],
+        'APPSETTINGS_REPO': ['modernization-appsettings-repo'],
+        'MANIFEST_REPO': [],
+        'CLUSTER_ROLE_ARN': [],
+        'DOCKER_REPO_DIR': []
+    }
+
+def save_suggestions(suggestions):
+    """
+    Save environment variable suggestions to JSON file.
+    Persists user-customized suggestions across server restarts.
+    Returns True on success, False on failure.
+    """
+    try:
+        with open(SUGGESTIONS_FILE, 'w') as f:
+            json.dump(suggestions, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving suggestions: {e}")
+        return False
+
+@app.route('/api/env-suggestions', methods=['GET'])
+def get_env_suggestions():
+    """
+    API endpoint to retrieve environment variable suggestions.
+    Used by frontend autocomplete feature to help users with common env vars.
+    """
+    try:
+        suggestions = load_suggestions()
+        return jsonify({
+            'success': True,
+            'suggestions': suggestions
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/env-suggestions', methods=['POST'])
+def update_env_suggestions():
+    """
+    API endpoint to update environment variable suggestions.
+    Allows users to customize autocomplete suggestions through the Settings modal.
+    """
+    try:
+        data = request.json
+        suggestions = data.get('suggestions', {})
+        
+        if save_suggestions(suggestions):
+            return jsonify({
+                'success': True,
+                'message': 'Suggestions updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save suggestions'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
