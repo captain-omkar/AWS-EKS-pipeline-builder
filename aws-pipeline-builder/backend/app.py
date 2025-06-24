@@ -1126,6 +1126,12 @@ def get_pipeline_by_name(pipeline_name):
         pipeline = storage.get_pipeline(pipeline_name)
         
         if pipeline:
+            # Add read-only flags for existing pipelines
+            pipeline['readOnlyFields'] = {
+                'buildspec': True,
+                'buildspecPath': True,
+                'useBuildspecFile': True
+            }
             return jsonify({
                 'success': True,
                 'pipeline': pipeline
@@ -1327,11 +1333,13 @@ def update_pipeline(pipeline_name):
             for i, p in enumerate(pipelines):
                 if p.get('name') == pipeline_name:
                     # Update the pipeline data with new configuration
+                    # NOTE: Buildspec fields are read-only for existing pipelines
                     pipelines[i].update({
                         'repositoryName': pipeline_config.get('repositoryName', p.get('repositoryName')),
                         'branchName': pipeline_config.get('branchName', p.get('branchName')),
-                        'buildspecPath': pipeline_config.get('buildspecPath', p.get('buildspecPath')),
-                        'useBuildspecFile': pipeline_config.get('useBuildspecFile', p.get('useBuildspecFile')),
+                        # Keep existing buildspec configuration - do not update
+                        'buildspecPath': p.get('buildspecPath'),
+                        'useBuildspecFile': p.get('useBuildspecFile'),
                         'computeType': pipeline_config.get('computeType', p.get('computeType')),
                         'environmentVariables': pipeline_config.get('environmentVariables', p.get('environmentVariables')),
                         'deploymentConfig': pipeline_config.get('deploymentConfig', p.get('deploymentConfig')),
@@ -1405,7 +1413,89 @@ def delete_pipeline_resources(pipeline_name):
         except Exception as e:
             errors.append(f"❌ Failed to delete ECR repository {pipeline_name}: {str(e)}")
         
-        # 4. Delete manifest folder from staging-repo
+        # 4. Delete S3 artifact bucket
+        try:
+            # First, get the pipeline configuration to find the S3 bucket name
+            try:
+                pipeline_details = codepipeline.get_pipeline(name=pipeline_name)
+                bucket_name = pipeline_details['pipeline']['artifactStore']['location']
+                
+                # Delete all objects in the bucket first (S3 requires empty bucket for deletion)
+                s3 = boto3.client('s3')
+                
+                # List and delete all objects
+                try:
+                    objects = s3.list_objects_v2(Bucket=bucket_name)
+                    if 'Contents' in objects:
+                        delete_keys = [{'Key': obj['Key']} for obj in objects['Contents']]
+                        s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_keys})
+                        print(f"Deleted {len(delete_keys)} objects from S3 bucket: {bucket_name}")
+                    
+                    # Delete all object versions if versioning was enabled
+                    versions = s3.list_object_versions(Bucket=bucket_name)
+                    if 'Versions' in versions:
+                        delete_keys = [{'Key': v['Key'], 'VersionId': v['VersionId']} for v in versions['Versions']]
+                        if delete_keys:
+                            s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_keys})
+                    
+                    if 'DeleteMarkers' in versions:
+                        delete_markers = [{'Key': d['Key'], 'VersionId': d['VersionId']} for d in versions['DeleteMarkers']]
+                        if delete_markers:
+                            s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_markers})
+                    
+                    # Now delete the empty bucket
+                    s3.delete_bucket(Bucket=bucket_name)
+                    successes.append(f"✅ Deleted S3 bucket: {bucket_name}")
+                    
+                except s3.exceptions.NoSuchBucket:
+                    errors.append(f"⚠️ S3 bucket {bucket_name} not found")
+                except Exception as e:
+                    errors.append(f"❌ Failed to delete S3 bucket {bucket_name}: {str(e)}")
+                    
+            except codepipeline.exceptions.PipelineNotFoundException:
+                # Pipeline doesn't exist, try to find buckets by pattern
+                s3 = boto3.client('s3')
+                response = s3.list_buckets()
+                pattern = f"{pipeline_name}-artifacts"
+                
+                found_buckets = []
+                for bucket in response.get('Buckets', []):
+                    if bucket['Name'].startswith(pattern):
+                        found_buckets.append(bucket['Name'])
+                
+                if found_buckets:
+                    for bucket_name in found_buckets:
+                        try:
+                            # Delete all objects
+                            objects = s3.list_objects_v2(Bucket=bucket_name)
+                            if 'Contents' in objects:
+                                delete_keys = [{'Key': obj['Key']} for obj in objects['Contents']]
+                                s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_keys})
+                            
+                            # Delete versions and markers
+                            versions = s3.list_object_versions(Bucket=bucket_name)
+                            if 'Versions' in versions:
+                                delete_keys = [{'Key': v['Key'], 'VersionId': v['VersionId']} for v in versions['Versions']]
+                                if delete_keys:
+                                    s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_keys})
+                            
+                            if 'DeleteMarkers' in versions:
+                                delete_markers = [{'Key': d['Key'], 'VersionId': d['VersionId']} for d in versions['DeleteMarkers']]
+                                if delete_markers:
+                                    s3.delete_objects(Bucket=bucket_name, Delete={'Objects': delete_markers})
+                            
+                            # Delete bucket
+                            s3.delete_bucket(Bucket=bucket_name)
+                            successes.append(f"✅ Deleted S3 bucket: {bucket_name}")
+                        except Exception as e:
+                            errors.append(f"❌ Failed to delete S3 bucket {bucket_name}: {str(e)}")
+                else:
+                    errors.append(f"⚠️ No S3 buckets found matching pattern: {pattern}*")
+                    
+        except Exception as e:
+            errors.append(f"❌ Failed to delete S3 artifacts: {str(e)}")
+        
+        # 5. Delete manifest folder from staging-repo
         if pipeline_meta:
             env_vars = pipeline_meta.get('environmentVariables', [])
             manifest_repo = None
@@ -1535,7 +1625,7 @@ def delete_pipeline_resources(pipeline_name):
             except Exception as e:
                 errors.append(f"❌ Failed to delete appsettings folder: {str(e)}")
         
-        # 5. Delete pipeline metadata
+        # 6. Delete pipeline metadata
         try:
             # Delete from DynamoDB
             if storage.delete_pipeline(pipeline_name):

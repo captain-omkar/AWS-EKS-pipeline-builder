@@ -964,21 +964,23 @@ const PipelineForm: React.FC = () => {
                 <div className="build-config-content">
                   <div className="compact-row">
                     <div className="compact-group">
-                      <label>Buildspec:</label>
+                      <label>Buildspec: {isEditMode && <span style={{color: '#666', fontSize: '0.9em'}}>(Read-only for existing pipelines)</span>}</label>
                       <div className="buildspec-compact">
-                        <label className="radio-label-compact">
+                        <label className="radio-label-compact" style={isEditMode ? {opacity: 0.6, cursor: 'not-allowed'} : {}}>
                           <input
                             type="radio"
                             checked={pipeline.useBuildspecFile}
-                            onChange={() => updatePipeline(pIndex, 'useBuildspecFile', true)}
+                            onChange={() => !isEditMode && updatePipeline(pIndex, 'useBuildspecFile', true)}
+                            disabled={isEditMode}
                           />
                           File
                         </label>
-                        <label className="radio-label-compact">
+                        <label className="radio-label-compact" style={isEditMode ? {opacity: 0.6, cursor: 'not-allowed'} : {}}>
                           <input
                             type="radio"
                             checked={!pipeline.useBuildspecFile}
-                            onChange={() => updatePipeline(pIndex, 'useBuildspecFile', false)}
+                            onChange={() => !isEditMode && updatePipeline(pIndex, 'useBuildspecFile', false)}
+                            disabled={isEditMode}
                           />
                           Inline
                         </label>
@@ -987,18 +989,26 @@ const PipelineForm: React.FC = () => {
                             type="text"
                             className="compact-input"
                             value={pipeline.buildspecPath}
-                            onChange={(e) => updatePipeline(pIndex, 'buildspecPath', e.target.value)}
+                            onChange={(e) => !isEditMode && updatePipeline(pIndex, 'buildspecPath', e.target.value)}
                             placeholder="buildspec.yml"
                             required
+                            disabled={isEditMode}
+                            style={isEditMode ? {backgroundColor: '#f5f5f5', cursor: 'not-allowed'} : {}}
                           />
                         ) : (
-                          <button 
-                            type="button" 
-                            onClick={() => setEditingBuildspecIndex(pIndex)}
-                            className="edit-buildspec-btn-compact"
-                          >
-                            Edit
-                          </button>
+                          isEditMode ? (
+                            <span style={{color: '#666', fontSize: '0.9em'}}>
+                              Inline buildspec (cannot be edited)
+                            </span>
+                          ) : (
+                            <button 
+                              type="button" 
+                              onClick={() => setEditingBuildspecIndex(pIndex)}
+                              className="edit-buildspec-btn-compact"
+                            >
+                              Edit
+                            </button>
+                          )
                         )}
                       </div>
                     </div>
