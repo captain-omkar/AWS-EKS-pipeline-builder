@@ -2,13 +2,21 @@
   "APPSETTINGS_REPO": [
     "modernization-appsettings-repo"
   ],
-  "CLUSTER_ROLE_ARN": [],
-  "DOCKER_REPO_DIR": [],
-  "MANIFEST_REPO": [
-    "modernization",
-    "cmo"
+  "CLUSTER_NAME": [
+    "Staging_cluster",
+    "prod"
   ],
-  "SMCREDS": [
+  "CLUSTER_ROLE_ARN": [
+    "arn:aws:iam::465105616690:role/staging_ekscluster_role"
+  ],
+  "DOCKER_REPO_DIR": [],
+  "ECR_REGISTRY": [
+    "465105616690.dkr.ecr.ap-south-1.amazonaws.com"
+  ],
+  "MANIFEST_REPO": [
+    "staging-repo"
+  ],
+  "SECRET_CREDS": [
     "Database",
     "cmo-secrets",
     "newzverse-secrets"

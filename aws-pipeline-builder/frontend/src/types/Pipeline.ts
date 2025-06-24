@@ -23,6 +23,38 @@ export interface BuildspecConfig {
   phases: BuildspecPhases;
 }
 
+export interface DeploymentConfig {
+  namespace: string;
+  appType: string;
+  product: string;
+  memoryLimit: string;
+  cpuLimit: string;
+  memoryRequest: string;
+  cpuRequest: string;
+  nodeGroup: string;
+  useServiceAccount?: boolean;
+  serviceAccountName?: string;
+}
+
+export interface HPAConfig {
+  type: 'hpa';
+  minPods: number;
+  maxPods: number;
+  cpuThreshold: number;
+  memoryThreshold: number;
+}
+
+export interface KafkaScalingConfig {
+  type: 'kafka';
+  minPods: number;
+  maxPods: number;
+  topicName: string;
+  consumerGroup: string;
+  bootstrapServers: string;
+}
+
+export type ScalingConfig = HPAConfig | KafkaScalingConfig;
+
 export interface PipelineConfig {
   pipelineName: string;
   repositoryName: string;
@@ -32,6 +64,10 @@ export interface PipelineConfig {
   buildspec?: BuildspecConfig;
   computeType: string;
   environmentVariables: EnvironmentVariable[];
+  appsettingsFile?: File;
+  appsettingsContent?: string;
+  deploymentConfig?: DeploymentConfig;
+  scalingConfig?: ScalingConfig;
 }
 
 export interface DefaultValues {

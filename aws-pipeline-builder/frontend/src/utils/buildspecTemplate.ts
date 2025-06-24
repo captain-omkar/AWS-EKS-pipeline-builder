@@ -16,6 +16,7 @@
  */
 
 import { BuildspecConfig } from '../types/Pipeline';
+import { getApiUrl } from '../config';
 
 /**
  * Returns a default buildspec configuration object
@@ -27,16 +28,33 @@ import { BuildspecConfig } from '../types/Pipeline';
  * - Post-build phase: Pushes images to ECR and deploys to Kubernetes
  * 
  * The template uses environment variables for configuration:
- * - SMCREDS: AWS Secrets Manager secret ID
+ * - SECRET_CREDS: AWS Secrets Manager secret ID
  * - SERVICE_NAME: Name of the service being built
  * - ECR_REPO_URI: ECR repository URI
+ * - ECR_REGISTRY: ECR registry URL for Docker login
  * - APPSETTINGS_REPO: CodeCommit repo for application settings
  * - MANIFEST_REPO: CodeCommit repo for Kubernetes manifests
  * - CLUSTER_ROLE_ARN: IAM role for kubectl operations
+ * - CLUSTER_NAME: EKS cluster name
  * 
  * @returns {BuildspecConfig} A complete buildspec configuration object
  */
-export const getDefaultBuildspec = (): BuildspecConfig => ({
+export const getDefaultBuildspec = async (): Promise<BuildspecConfig> => {
+  try {
+    // Try to fetch buildspec from settings
+    const response = await fetch(getApiUrl('/api/pipeline-settings'));
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.settings.buildspec && Object.keys(data.settings.buildspec).length > 0) {
+        return data.settings.buildspec;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch buildspec from settings:', error);
+  }
+  
+  // Fallback to default buildspec
+  return {
   version: 0.2,
   phases: {
     // Installation phase - sets up required tools and dependencies
@@ -59,11 +77,11 @@ export const getDefaultBuildspec = (): BuildspecConfig => ({
         // Display AWS CLI version for debugging
         'aws --version',
         // Login to ECR using AWS credentials
-        'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 465105616690.dkr.ecr.ap-south-1.amazonaws.com',
+        'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY',
         // Set kubeconfig path for kubectl
         'export KUBECONFIG=$HOME/.kube/config',
         // Retrieve database credentials from AWS Secrets Manager
-        'aws secretsmanager get-secret-value --secret-id $SMCREDS --query \'SecretString\' --output text > Database.json'
+        'aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query \'SecretString\' --output text > Database.json'
       ]
     },
     // Build phase - main build and configuration steps
@@ -73,7 +91,7 @@ export const getDefaultBuildspec = (): BuildspecConfig => ({
         // Extract image tag from CodeBuild build ID
         'IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F":" \'{print $2}\')',
         // Set target directory, default to current directory
-        'TARGET_DIR=${REPO_DIR:-.}',
+        'TARGET_DIR=${DOCKER_REPO_DIR:-.}',
         'echo "✅ Using SERVICE_NAME=$SERVICE_NAME"',
         'echo "✅ Using TARGET_DIR=$TARGET_DIR"',
         'echo "✅ Cloning appsettings repo..."',
@@ -126,19 +144,25 @@ done`,
         'echo "✅ Assume role for kubectl..."',
         // Clone Kubernetes manifests repository
         'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO',
-        // Navigate to manifests directory
-        'cd $MANIFEST_REPO/manifests/',
+        // Navigate to service-specific directory
+        'cd $MANIFEST_REPO/$SERVICE_NAME/',
         // List manifest files
         'ls',
         // Configure kubectl for EKS cluster
-        'aws eks update-kubeconfig --name Staging_cluster',
+        'aws eks update-kubeconfig --name $CLUSTER_NAME',
         // Update manifest with new image tag
         'sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml',
-        // Display updated manifest for verification
+        // Display manifests for verification
+        'echo "✅ Applying manifests..."',
         'cat $SERVICE_NAME.yml',
-        // Apply Kubernetes manifest to deploy/update service
-        'kubectl apply -f $SERVICE_NAME.yml'
+        'if [ -f "${SERVICE_NAME}-hpa.yml" ]; then cat "${SERVICE_NAME}-hpa.yml"; fi',
+        'if [ -f "${SERVICE_NAME}-kafka.yml" ]; then cat "${SERVICE_NAME}-kafka.yml"; fi',
+        // Apply Kubernetes manifests
+        'kubectl apply -f $SERVICE_NAME.yml',
+        'if [ -f "${SERVICE_NAME}-hpa.yml" ]; then kubectl apply -f "${SERVICE_NAME}-hpa.yml"; fi',
+        'if [ -f "${SERVICE_NAME}-kafka.yml" ]; then kubectl apply -f "${SERVICE_NAME}-kafka.yml"; fi'
       ]
     }
   }
-});
+  };
+};

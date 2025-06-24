@@ -1,0 +1,157 @@
+{
+  "aws": {
+    "accountId": "465105616690",
+    "ecrRegistry": "465105616690.dkr.ecr.ap-south-1.amazonaws.com",
+    "region": "ap-south-1"
+  },
+  "buildspec": {
+    "version": 0.2,
+    "phases": {
+      "install": {
+        "commands": [
+          "yum install -y jq unzip",
+          "curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl",
+          "chmod +x ./kubectl",
+          "mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin"
+        ]
+      },
+      "pre_build": {
+        "commands": [
+          "echo Logging in to Amazon ECR...",
+          "aws --version",
+          "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY",
+          "export KUBECONFIG=$HOME/.kube/config",
+          "aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query 'SecretString' --output text > Database.json"
+        ]
+      },
+      "build": {
+        "commands": [
+          "echo Build started on `date`",
+          "IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F\":\" '{print $2}')",
+          "TARGET_DIR=${DOCKER_REPO_DIR:-.}",
+          "echo \"\u2705 Using SERVICE_NAME=$SERVICE_NAME\"",
+          "echo \"\u2705 Using TARGET_DIR=$TARGET_DIR\"",
+          "echo \"\u2705 Cloning appsettings repo...\"",
+          "CREDENTIALS=$(aws sts assume-role --role-arn $CLUSTER_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)",
+          "export AWS_ACCESS_KEY_ID=\"$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')\"",
+          "export AWS_SECRET_ACCESS_KEY=\"$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')\"",
+          "export AWS_SESSION_TOKEN=\"$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')\"",
+          "git config --global credential.helper '!aws codecommit credential-helper $@'",
+          "git config --global credential.UseHttpPath true",
+          "git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO",
+          "cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/",
+          "#- echo \"\u2705 Downloading appsettings.json from S3...\"",
+          "#- aws s3 ls s3://eks-manifest-loco/appsettings/$SERVICE_NAME/",
+          "#- aws s3 cp s3://eks-manifest-loco/appsettings/$SERVICE_NAME/appsettings.json $TARGET_DIR/",
+          "ls -R $TARGET_DIR",
+          "echo \"\u2705 Replacing placeholders dynamically...\"",
+          "for key in $(jq -r 'keys[]' Database.json); do\n  value=$(jq -r --arg k \"$key\" '.[$k]' Database.json)\n  echo \"Replacing $key with $value\"\n  sed -i \"s|$key|$value|g\" $TARGET_DIR/appsettings.json\ndone",
+          "echo \"\u2705 Final appsettings.json:\"",
+          "cat $TARGET_DIR/appsettings.json",
+          "echo \"\u2705 Building Docker image...\"",
+          "docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .",
+          "docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG"
+        ]
+      },
+      "post_build": {
+        "commands": [
+          "echo Build completed on `date`",
+          "echo Pushing the Docker image...",
+          "docker push $ECR_REPO_URI:$IMAGE_TAG",
+          "echo Writing image definitions file...",
+          "echo \"$Repository_Name-$Branch_Name\"",
+          "echo \"\u2705 Assume role for kubectl...\"",
+          "echo \"oooooooooooooooo\"",
+          "git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO",
+          "cd $MANIFEST_REPO/$SERVICE_NAME/",
+          "ls",
+          "aws eks update-kubeconfig --name $CLUSTER_NAME",
+          "sed -i \"s/latest/$IMAGE_TAG/g\" $SERVICE_NAME.yml",
+          "echo \"\u2705 Applying manifests...\"",
+          "cat $SERVICE_NAME.yml",
+          "if [ -f \"${SERVICE_NAME}-hpa.yml\" ]; then cat \"${SERVICE_NAME}-hpa.yml\"; fi",
+          "if [ -f \"${SERVICE_NAME}-kafka.yml\" ]; then cat \"${SERVICE_NAME}-kafka.yml\"; fi",
+          "kubectl apply -f $SERVICE_NAME.yml",
+          "if [ -f \"${SERVICE_NAME}-hpa.yml\" ]; then kubectl apply -f \"${SERVICE_NAME}-hpa.yml\"; fi",
+          "if [ -f \"${SERVICE_NAME}-kafka.yml\" ]; then kubectl apply -f \"${SERVICE_NAME}-kafka.yml\"; fi"
+        ]
+      }
+    }
+  },
+  "codebuild": {
+    "environmentImage": "aws/codebuild/amazonlinux-x86_64-standard:5.0",
+    "environmentType": "LINUX_CONTAINER",
+    "imagePullCredentialsType": "CODEBUILD",
+    "privilegedMode": true,
+    "securityGroup": "sg-0607b128992bab5f1",
+    "serviceRole": "staging-serviceNGapi-codebuild-role",
+    "subnets": [
+      "subnet-007a254219b4bcda9",
+      "subnet-012c070cded403c22"
+    ],
+    "vpcId": "vpc-056dc807b85acec1f"
+  },
+  "codepipeline": {
+    "buildProvider": "CodeBuild",
+    "codestarConnectionName": "github-connections",
+    "serviceRole": "staging-codepipeline-role",
+    "sourceProvider": "CodeStarSourceConnection"
+  },
+  "eks": {
+    "clusterName": "Staging_cluster",
+    "clusterRoleArn": "arn:aws:iam::465105616690:role/staging_ekscluster_role"
+  },
+  "deploymentOptions": {
+    "appTypes": [
+      "csharp",
+      "python",
+      "java",
+      "nodejs"
+    ],
+    "bootstrapServers": [
+      "b-1.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092,b-2.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092"
+    ],
+    "cpuOptions": [
+      "100m",
+      "150m",
+      "200m",
+      "250m",
+      "300m",
+      "400m",
+      "500m",
+      "1000m",
+      "2000m"
+    ],
+    "memoryOptions": [
+      "100Mi",
+      "150Mi",
+      "200Mi",
+      "250Mi",
+      "300Mi",
+      "400Mi",
+      "500Mi",
+      "1Gi",
+      "2Gi"
+    ],
+    "namespaces": [
+      "staging-locobuzz",
+      "production-locobuzz",
+      "om"
+    ],
+    "nodeGroups": [
+      "cmo-nodegroup",
+      "modernization-nodegroup",
+      "newsverse-nodegroup"
+    ],
+    "products": [
+      "cmo",
+      "modernization",
+      "newsverse"
+    ],
+    "serviceAccounts": [
+      "appmesh-comp",
+      "default",
+      "eks-service-account"
+    ]
+  }
+}

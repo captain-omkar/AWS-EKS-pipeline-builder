@@ -17,6 +17,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { getApiUrl } from '../config';
 
 /**
  * Props interface for the EnvVarInput component
@@ -60,6 +61,7 @@ const EnvVarInput: React.FC<EnvVarInputProps> = ({ name, value, onChange, placeh
    */
   useEffect(() => {
     fetchSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
 
   /**
@@ -95,7 +97,7 @@ const EnvVarInput: React.FC<EnvVarInputProps> = ({ name, value, onChange, placeh
    */
   const fetchSuggestions = async () => {
     try {
-      const response = await axios.get('/api/env-suggestions');
+      const response = await axios.get(getApiUrl('/api/env-suggestions'));
       // Check if response contains suggestions for this specific env var
       if (response.data.success && response.data.suggestions[name]) {
         setSuggestions(response.data.suggestions[name]);

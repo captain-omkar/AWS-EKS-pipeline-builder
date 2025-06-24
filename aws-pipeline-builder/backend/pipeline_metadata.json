@@ -1,0 +1,57 @@
+{
+  "pipelines": [
+    {
+      "name": "omkar-v15",
+      "repositoryName": "kjh",
+      "branchName": "updated-branch",
+      "buildspecPath": "buildspec.yml",
+      "useBuildspecFile": false,
+      "computeType": "BUILD_GENERAL1_SMALL",
+      "environmentVariables": [
+        {
+          "name": "DOCKER_REPO_DIR",
+          "value": ""
+        },
+        {
+          "name": "SECRET_CREDS",
+          "value": "Database"
+        },
+        {
+          "name": "APPSETTINGS_REPO",
+          "value": "modernization-appsettings-repo"
+        },
+        {
+          "name": "MANIFEST_REPO",
+          "value": "staging-repo"
+        }
+      ],
+      "deploymentConfig": {
+        "appType": "java",
+        "cpuLimit": "500m",
+        "cpuRequest": "250m",
+        "memoryLimit": "500Mi",
+        "memoryRequest": "250Mi",
+        "namespace": "staging-locobuzz",
+        "nodeGroup": "modernization-nodegroup",
+        "product": "modernization"
+      },
+      "scalingConfig": {
+        "cpuThreshold": 80,
+        "maxPods": 10,
+        "memoryThreshold": 80,
+        "minPods": 1,
+        "type": "hpa"
+      },
+      "pipelineArn": "arn:aws:codepipeline:ap-south-1:465105616690:pipeline/omkar-v15",
+      "resources": {
+        "pipeline": "omkar-v15",
+        "codebuild": "omkar-v15-build",
+        "ecrRepository": "omkar-v15",
+        "appsettingsRepo": "modernization-appsettings-repo",
+        "manifestRepo": "staging-repo"
+      },
+      "lastUpdated": "2025-06-23T17:52:16.941301",
+      "createdAt": "2025-06-23T13:49:36.432542"
+    }
+  ]
+}

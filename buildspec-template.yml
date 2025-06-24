@@ -12,15 +12,15 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 465105616690.dkr.ecr.ap-south-1.amazonaws.com
+      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
       - export KUBECONFIG=$HOME/.kube/config
-      - aws secretsmanager get-secret-value --secret-id $SMCREDS --query 'SecretString' --output text > Database.json
+      - aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query 'SecretString' --output text > Database.json
 
   build:
     commands:
       - echo Build started on `date`
       - IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F":" '{print $2}')
-      - TARGET_DIR=${REPO_DIR:-.}
+      - TARGET_DIR=${DOCKER_REPO_DIR:-.}
       - echo "✅ Using SERVICE_NAME=$SERVICE_NAME"
       - echo "✅ Using TARGET_DIR=$TARGET_DIR"
 
@@ -66,10 +66,17 @@ phases:
       - echo "✅ Assume role for kubectl..."
       
       - git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO
-      - cd $MANIFEST_REPO/manifests/
+      - cd $MANIFEST_REPO/$SERVICE_NAME/
 
       - ls
-      - aws eks update-kubeconfig --name Staging_cluster
+      - aws eks update-kubeconfig --name $CLUSTER_NAME
       - sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml
+      
+      - echo "✅ Applying manifests..."
       - cat $SERVICE_NAME.yml
+      - if [ -f "${SERVICE_NAME}-hpa.yml" ]; then cat "${SERVICE_NAME}-hpa.yml"; fi
+      - if [ -f "${SERVICE_NAME}-kafka.yml" ]; then cat "${SERVICE_NAME}-kafka.yml"; fi
+      
       - kubectl apply -f $SERVICE_NAME.yml
+      - if [ -f "${SERVICE_NAME}-hpa.yml" ]; then kubectl apply -f "${SERVICE_NAME}-hpa.yml"; fi
+      - if [ -f "${SERVICE_NAME}-kafka.yml" ]; then kubectl apply -f "${SERVICE_NAME}-kafka.yml"; fi
