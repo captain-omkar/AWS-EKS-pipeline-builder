@@ -34,6 +34,7 @@ export interface DeploymentConfig {
   nodeGroup: string;
   useServiceAccount?: boolean;
   serviceAccountName?: string;
+  targetPort?: number;
 }
 
 export interface HPAConfig {

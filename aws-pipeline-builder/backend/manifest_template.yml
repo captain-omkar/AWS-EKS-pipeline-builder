@@ -25,7 +25,7 @@ spec:
         image: {{ image }}
         imagePullPolicy: Always
         ports:
-          - containerPort: 80
+          - containerPort: {{ target_port }}
         resources:
           limits:
             memory: "{{ memory_limit }}"
@@ -60,5 +60,5 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: {{ target_port }}
   type: ClusterIP

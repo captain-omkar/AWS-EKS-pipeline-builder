@@ -152,6 +152,20 @@
       "appmesh-comp",
       "default",
       "eks-service-account"
+    ],
+    "targetPortOptions": [
+      80,
+      443,
+      3000,
+      3001,
+      4000,
+      5000,
+      5001,
+      8080,
+      8081,
+      8443,
+      9000,
+      9090
     ]
   }
 }

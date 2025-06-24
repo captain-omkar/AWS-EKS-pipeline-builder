@@ -25,6 +25,7 @@ export const generateK8sManifest = async (
       manifest = manifest.replace(/\{\{\s*memory_request\s*\}\}/g, config.memoryRequest);
       manifest = manifest.replace(/\{\{\s*cpu_request\s*\}\}/g, config.cpuRequest);
       manifest = manifest.replace(/\{\{\s*node_group\s*\}\}/g, config.nodeGroup);
+      manifest = manifest.replace(/\{\{\s*target_port\s*\}\}/g, String(config.targetPort || 80));
       
       // Handle service account conditionally
       if (config.useServiceAccount && config.serviceAccountName) {
@@ -55,5 +56,6 @@ export const getDefaultDeploymentConfig = (): DeploymentConfig => ({
   cpuLimit: '300m',
   memoryRequest: '150Mi',
   cpuRequest: '150m',
-  nodeGroup: 'cmo-nodegroup'
+  nodeGroup: 'cmo-nodegroup',
+  targetPort: 80
 });

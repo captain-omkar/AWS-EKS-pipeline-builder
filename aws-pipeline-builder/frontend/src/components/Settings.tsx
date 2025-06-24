@@ -36,6 +36,7 @@ interface DeploymentOptions {
   memoryOptions: string[];
   cpuOptions: string[];
   bootstrapServers: string[];
+  targetPortOptions: number[];
 }
 
 interface PipelineSettings {
@@ -208,7 +209,8 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
     serviceAccounts: ['appmesh-comp', 'default', 'eks-service-account'],
     memoryOptions: ['100Mi', '150Mi', '200Mi', '250Mi', '300Mi', '400Mi', '500Mi', '1Gi', '2Gi'],
     cpuOptions: ['100m', '150m', '200m', '250m', '300m', '400m', '500m', '1000m', '2000m'],
-    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.staging.locobuzz.com:9092']
+    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.staging.locobuzz.com:9092'],
+    targetPortOptions: [80, 443, 3000, 3001, 4000, 5000, 5001, 8080, 8081, 8443, 9000, 9090]
   });
   
   // Loading state
@@ -1217,6 +1219,65 @@ phases:
                           const updated = [...deploymentOptions.bootstrapServers, input.value.trim()];
                           setDeploymentOptions(prev => ({ ...prev, bootstrapServers: updated }));
                           input.value = '';
+                        }
+                      }}
+                      className="add-btn"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Target Port Options */}
+              <div className="env-section">
+                <h4>Target Port Options</h4>
+                <div className="env-list">
+                  {deploymentOptions.targetPortOptions.map((port, index) => (
+                    <div key={index} className="env-item">
+                      <span>{port}</span>
+                      <button
+                        onClick={() => {
+                          const updated = deploymentOptions.targetPortOptions.filter((_, i) => i !== index);
+                          setDeploymentOptions(prev => ({ ...prev, targetPortOptions: updated }));
+                        }}
+                        className="remove-btn"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div className="env-input-group">
+                    <input
+                      type="number"
+                      id="targetport-input"
+                      placeholder="Add target port (e.g., 8080)"
+                      min="1"
+                      max="65535"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const input = e.currentTarget;
+                          const value = parseInt(input.value.trim());
+                          if (value && value > 0 && value <= 65535 && !deploymentOptions.targetPortOptions.includes(value)) {
+                            const updated = [...deploymentOptions.targetPortOptions, value].sort((a, b) => a - b);
+                            setDeploymentOptions(prev => ({ ...prev, targetPortOptions: updated }));
+                            input.value = '';
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const input = document.getElementById('targetport-input') as HTMLInputElement;
+                        if (input) {
+                          const value = parseInt(input.value.trim());
+                          if (value && value > 0 && value <= 65535 && !deploymentOptions.targetPortOptions.includes(value)) {
+                            const updated = [...deploymentOptions.targetPortOptions, value].sort((a, b) => a - b);
+                            setDeploymentOptions(prev => ({ ...prev, targetPortOptions: updated }));
+                            input.value = '';
+                          }
                         }
                       }}
                       className="add-btn"

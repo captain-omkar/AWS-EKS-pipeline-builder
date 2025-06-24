@@ -196,7 +196,7 @@ spec:
         image: {{ image }}
         imagePullPolicy: Always
         ports:
-          - containerPort: 80
+          - containerPort: {{ target_port }}
         resources:
           limits:
             memory: "{{ memory_limit }}"
@@ -231,7 +231,7 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: {{ target_port }}
   type: ClusterIP
 """
     except Exception as e:
@@ -257,6 +257,7 @@ def generate_k8s_manifest(pipeline_name, ecr_uri, deployment_config):
     manifest = manifest.replace('{{ memory_request }}', deployment_config.get('memoryRequest', '150Mi'))
     manifest = manifest.replace('{{ cpu_request }}', deployment_config.get('cpuRequest', '150m'))
     manifest = manifest.replace('{{ node_group }}', deployment_config.get('nodeGroup', 'cmo-nodegroup'))
+    manifest = manifest.replace('{{ target_port }}', str(deployment_config.get('targetPort', 80)))
     
     return manifest
 
@@ -1714,6 +1715,21 @@ def get_pipeline_appsettings(pipeline_name):
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/manifest-template', methods=['GET'])
+def get_manifest_template():
+    """Get the manifest template for preview"""
+    try:
+        template = load_manifest_template()
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load manifest template: {str(e)}'
         }), 500
 
 

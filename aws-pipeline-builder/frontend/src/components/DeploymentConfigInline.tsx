@@ -12,6 +12,7 @@ interface DeploymentOptions {
   serviceAccounts: string[];
   memoryOptions: string[];
   cpuOptions: string[];
+  targetPortOptions?: number[];
 }
 
 interface DeploymentConfigInlineProps {
@@ -234,6 +235,25 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                     <option key={cpu} value={cpu} />
                   ))}
                 </datalist>
+              </div>
+
+              <div className="inline-field">
+                <label>Target Port:</label>
+                <input
+                  type="number"
+                  list="targetport-options"
+                  value={deploymentConfig.targetPort || 80}
+                  onChange={(e) => handleInputChange('targetPort', parseInt(e.target.value) || 80)}
+                  placeholder="e.g., 80"
+                  min="1"
+                  max="65535"
+                />
+                <datalist id="targetport-options">
+                  {(deploymentOptions.targetPortOptions || [80, 443, 3000, 3001, 4000, 5000, 5001, 8080, 8081, 8443, 9000, 9090]).map(port => (
+                    <option key={port} value={port} />
+                  ))}
+                </datalist>
+                <small style={{color: '#666', marginLeft: '5px'}}>Container port for the application</small>
               </div>
             </div>
           </div>
