@@ -37,6 +37,7 @@ interface DeploymentOptions {
   cpuOptions: string[];
   bootstrapServers: string[];
   targetPortOptions: number[];
+  serviceTypeOptions?: string[];
 }
 
 interface PipelineSettings {

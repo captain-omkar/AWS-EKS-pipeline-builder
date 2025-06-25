@@ -897,6 +897,7 @@ const PipelineForm: React.FC = () => {
                   config={pipeline.deploymentConfig}
                   onSave={(config) => saveDeploymentConfig(pIndex, config)}
                   onClose={() => setExpandedDeploymentConfig(expandedDeploymentConfig.filter(i => i !== pIndex))}
+                  isEditMode={isEditMode}
                 />
               )}
 

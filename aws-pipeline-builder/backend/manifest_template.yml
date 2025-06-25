@@ -33,20 +33,7 @@ spec:
           requests:
             memory: "{{ memory_request }}"
             cpu: "{{ cpu_request }}"
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: {{ node_group }}
-                    operator: In
-                    values:
-                      - "true"
-      tolerations:
-        - key: {{ node_group }}
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
+{{ node_affinity_section }}
 
 ---
 apiVersion: v1
@@ -61,4 +48,4 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: {{ target_port }}
-  type: ClusterIP
+  type: {{ service_type }}

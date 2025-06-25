@@ -21,6 +21,7 @@ interface DeploymentConfigInlineProps {
   config?: DeploymentConfigType;
   onSave: (config: DeploymentConfigType) => void;
   onClose: () => void;
+  isEditMode?: boolean;  // New prop to determine if we're editing an existing pipeline
 }
 
 const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
@@ -28,7 +29,8 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   ecrUri,
   config,
   onSave,
-  onClose
+  onClose,
+  isEditMode = false
 }) => {
   const [deploymentConfig, setDeploymentConfig] = useState<DeploymentConfigType>(
     config || getDefaultDeploymentConfig()
@@ -36,6 +38,9 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   const [showPreview, setShowPreview] = useState(false);
   const [generatedManifest, setGeneratedManifest] = useState<string>('');
   const [loadingManifest, setLoadingManifest] = useState(false);
+  const [existingManifest, setExistingManifest] = useState<string | null>(null);
+  const [loadingExistingManifest, setLoadingExistingManifest] = useState(false);
+  const [manifestExists, setManifestExists] = useState(false);
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
     namespaces: ['staging-locobuzz', 'production-locobuzz'],
     appTypes: ['csharp', 'python', 'java', 'nodejs'],
@@ -46,7 +51,7 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
     cpuOptions: ['100m', '150m', '200m', '250m', '300m', '400m', '500m', '1000m', '2000m']
   });
 
-  const handleInputChange = (field: keyof DeploymentConfigType, value: string | boolean) => {
+  const handleInputChange = (field: keyof DeploymentConfigType, value: string | boolean | number) => {
     setDeploymentConfig({
       ...deploymentConfig,
       [field]: value
@@ -67,6 +72,33 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
     };
     fetchDeploymentOptions();
   }, []);
+
+  // Fetch existing manifest if in edit mode
+  useEffect(() => {
+    const fetchExistingManifest = async () => {
+      if (isEditMode) {
+        setLoadingExistingManifest(true);
+        try {
+          const response = await axios.get(getApiUrl(`/api/pipelines/${pipelineName}/manifest`));
+          if (response.data.success) {
+            if (response.data.exists) {
+              setExistingManifest(response.data.content);
+              setManifestExists(true);
+            } else {
+              // Manifest doesn't exist yet
+              setManifestExists(false);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching existing manifest:', error);
+          setManifestExists(false);
+        } finally {
+          setLoadingExistingManifest(false);
+        }
+      }
+    };
+    fetchExistingManifest();
+  }, [isEditMode, pipelineName]);
 
   useEffect(() => {
     const loadManifest = async () => {
@@ -104,75 +136,65 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
             <span><strong>Image:</strong> {ecrUri}:latest</span>
           </div>
 
-          <div className="inline-form-grid">
-            <div className="inline-field">
-              <label>Namespace:</label>
-              <input
-                type="text"
-                list="namespace-options"
-                value={deploymentConfig.namespace}
-                onChange={(e) => handleInputChange('namespace', e.target.value)}
-                placeholder="Enter or select namespace"
-              />
-              <datalist id="namespace-options">
-                {deploymentOptions.namespaces.map(namespace => (
-                  <option key={namespace} value={namespace} />
-                ))}
-              </datalist>
-            </div>
+          <div className="basic-config-section">
+            <h5>Basic Configuration</h5>
+            <div className="inline-form-grid" style={{gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px'}}>
+              <div className="inline-field">
+                <label>Namespace:</label>
+                <input
+                  type="text"
+                  list="namespace-options"
+                  value={deploymentConfig.namespace}
+                  onChange={(e) => handleInputChange('namespace', e.target.value)}
+                  placeholder="Select namespace"
+                  style={{width: '100%'}}
+                />
+                <datalist id="namespace-options">
+                  {deploymentOptions.namespaces.map(namespace => (
+                    <option key={namespace} value={namespace} />
+                  ))}
+                </datalist>
+              </div>
 
-            <div className="inline-field">
-              <label>App Type:</label>
-              <input
-                type="text"
-                list="apptype-options"
-                value={deploymentConfig.appType}
-                onChange={(e) => handleInputChange('appType', e.target.value)}
-                placeholder="Enter or select app type"
-              />
-              <datalist id="apptype-options">
-                {deploymentOptions.appTypes.map(appType => (
-                  <option key={appType} value={appType} />
-                ))}
-              </datalist>
-            </div>
+              <div className="inline-field">
+                <label>App Type:</label>
+                <input
+                  type="text"
+                  list="apptype-options"
+                  value={deploymentConfig.appType}
+                  onChange={(e) => handleInputChange('appType', e.target.value)}
+                  placeholder="Select app type"
+                  style={{width: '100%'}}
+                />
+                <datalist id="apptype-options">
+                  {deploymentOptions.appTypes.map(appType => (
+                    <option key={appType} value={appType} />
+                  ))}
+                </datalist>
+              </div>
 
-            <div className="inline-field">
-              <label>Product:</label>
-              <input
-                type="text"
-                list="product-options"
-                value={deploymentConfig.product}
-                onChange={(e) => handleInputChange('product', e.target.value)}
-                placeholder="Enter or select product"
-              />
-              <datalist id="product-options">
-                {deploymentOptions.products.map(product => (
-                  <option key={product} value={product} />
-                ))}
-              </datalist>
-            </div>
-
-            <div className="inline-field">
-              <label>Node Group:</label>
-              <input
-                type="text"
-                list="nodegroup-options"
-                value={deploymentConfig.nodeGroup}
-                onChange={(e) => handleInputChange('nodeGroup', e.target.value)}
-                placeholder="Enter or select node group"
-              />
-              <datalist id="nodegroup-options">
-                {deploymentOptions.nodeGroups.map(nodeGroup => (
-                  <option key={nodeGroup} value={nodeGroup} />
-                ))}
-              </datalist>
+              <div className="inline-field">
+                <label>Product:</label>
+                <input
+                  type="text"
+                  list="product-options"
+                  value={deploymentConfig.product}
+                  onChange={(e) => handleInputChange('product', e.target.value)}
+                  placeholder="Select product"
+                  style={{width: '100%'}}
+                />
+                <datalist id="product-options">
+                  {deploymentOptions.products.map(product => (
+                    <option key={product} value={product} />
+                  ))}
+                </datalist>
+              </div>
             </div>
           </div>
 
           <div className="resources-section">
             <h5>Resources</h5>
-            <div className="inline-form-grid">
+            <div className="inline-form-grid" style={{gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px'}}>
               <div className="inline-field">
                 <label>Memory Request:</label>
                 <input
@@ -180,7 +202,8 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   list="memory-request-options"
                   value={deploymentConfig.memoryRequest}
                   onChange={(e) => handleInputChange('memoryRequest', e.target.value)}
-                  placeholder="e.g., 150Mi"
+                  placeholder="150Mi"
+                  style={{width: '100%'}}
                 />
                 <datalist id="memory-request-options">
                   {deploymentOptions.memoryOptions.map(memory => (
@@ -196,7 +219,8 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   list="memory-limit-options"
                   value={deploymentConfig.memoryLimit}
                   onChange={(e) => handleInputChange('memoryLimit', e.target.value)}
-                  placeholder="e.g., 300Mi"
+                  placeholder="300Mi"
+                  style={{width: '100%'}}
                 />
                 <datalist id="memory-limit-options">
                   {deploymentOptions.memoryOptions.map(memory => (
@@ -212,7 +236,8 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   list="cpu-request-options"
                   value={deploymentConfig.cpuRequest}
                   onChange={(e) => handleInputChange('cpuRequest', e.target.value)}
-                  placeholder="e.g., 150m"
+                  placeholder="150m"
+                  style={{width: '100%'}}
                 />
                 <datalist id="cpu-request-options">
                   {deploymentOptions.cpuOptions.map(cpu => (
@@ -228,7 +253,8 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   list="cpu-limit-options"
                   value={deploymentConfig.cpuLimit}
                   onChange={(e) => handleInputChange('cpuLimit', e.target.value)}
-                  placeholder="e.g., 300m"
+                  placeholder="300m"
+                  style={{width: '100%'}}
                 />
                 <datalist id="cpu-limit-options">
                   {deploymentOptions.cpuOptions.map(cpu => (
@@ -236,7 +262,12 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   ))}
                 </datalist>
               </div>
+            </div>
+          </div>
 
+          <div className="service-config-section">
+            <h5>Service Configuration</h5>
+            <div className="inline-form-grid" style={{gridTemplateColumns: '1fr 1fr', gap: '20px'}}>
               <div className="inline-field">
                 <label>Target Port:</label>
                 <input
@@ -244,50 +275,93 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
                   list="targetport-options"
                   value={deploymentConfig.targetPort || 80}
                   onChange={(e) => handleInputChange('targetPort', parseInt(e.target.value) || 80)}
-                  placeholder="e.g., 80"
+                  placeholder="80"
                   min="1"
                   max="65535"
+                  style={{width: '100%'}}
                 />
                 <datalist id="targetport-options">
                   {(deploymentOptions.targetPortOptions || [80, 443, 3000, 3001, 4000, 5000, 5001, 8080, 8081, 8443, 9000, 9090]).map(port => (
                     <option key={port} value={port} />
                   ))}
                 </datalist>
-                <small style={{color: '#666', marginLeft: '5px'}}>Container port for the application</small>
+              </div>
+
+              <div className="inline-field">
+                <label>Service Type:</label>
+                <select
+                  value={deploymentConfig.serviceType || 'ClusterIP'}
+                  onChange={(e) => handleInputChange('serviceType', e.target.value)}
+                  style={{width: '100%', padding: '8px'}}
+                >
+                  <option value="ClusterIP">ClusterIP</option>
+                  <option value="LoadBalancer">LoadBalancer</option>
+                  <option value="NodePort">NodePort</option>
+                </select>
               </div>
             </div>
           </div>
 
-          <div className="service-account-section">
-            <h5>Service Account</h5>
-            <div className="inline-form-grid">
-              <div className="inline-field">
-                <label>
+          <div className="advanced-section">
+            <h5>Advanced Configuration</h5>
+            <div style={{display: 'flex', gap: '40px', marginBottom: '20px'}}>
+              <div style={{flex: 1}}>
+                <label style={{display: 'flex', alignItems: 'center', cursor: 'pointer'}}>
+                  <input
+                    type="checkbox"
+                    checked={deploymentConfig.useSpecificNodeGroup || false}
+                    onChange={(e) => handleInputChange('useSpecificNodeGroup', e.target.checked)}
+                    style={{width: '20px', height: '20px', marginRight: '10px'}}
+                  />
+                  <span style={{fontSize: '16px'}}>Use Specific Node Group (with taints/tolerations)</span>
+                </label>
+                {deploymentConfig.useSpecificNodeGroup && (
+                  <div style={{marginTop: '10px', marginLeft: '30px'}}>
+                    <input
+                      type="text"
+                      list="nodegroup-options"
+                      value={deploymentConfig.nodeGroup}
+                      onChange={(e) => handleInputChange('nodeGroup', e.target.value)}
+                      placeholder="Select node group"
+                      style={{width: '100%', padding: '8px'}}
+                    />
+                    <datalist id="nodegroup-options">
+                      {deploymentOptions.nodeGroups.map(nodeGroup => (
+                        <option key={nodeGroup} value={nodeGroup} />
+                      ))}
+                    </datalist>
+                  </div>
+                )}
+              </div>
+
+              <div style={{flex: 1}}>
+                <label style={{display: 'flex', alignItems: 'center', cursor: 'pointer'}}>
                   <input
                     type="checkbox"
                     checked={deploymentConfig.useServiceAccount || false}
                     onChange={(e) => handleInputChange('useServiceAccount', e.target.checked)}
+                    style={{width: '20px', height: '20px', marginRight: '10px'}}
                   />
-                  Use Service Account
+                  <span style={{fontSize: '16px'}}>Use Service Account</span>
                 </label>
+                {deploymentConfig.useServiceAccount && (
+                  <div style={{marginTop: '10px', marginLeft: '30px'}}>
+                    <input
+                      type="text"
+                      list="serviceaccount-options"
+                      value={deploymentConfig.serviceAccountName || ''}
+                      onChange={(e) => handleInputChange('serviceAccountName', e.target.value)}
+                      placeholder="Select service account"
+                      style={{width: '100%', padding: '8px'}}
+                    />
+                    <datalist id="serviceaccount-options">
+                      {deploymentOptions.serviceAccounts.map(sa => (
+                        <option key={sa} value={sa} />
+                      ))}
+                    </datalist>
+                  </div>
+                )}
               </div>
-              {deploymentConfig.useServiceAccount && (
-                <div className="inline-field">
-                  <label>Service Account Name:</label>
-                  <input
-                    type="text"
-                    list="serviceaccount-options"
-                    value={deploymentConfig.serviceAccountName || ''}
-                    onChange={(e) => handleInputChange('serviceAccountName', e.target.value)}
-                    placeholder="Enter or select service account"
-                  />
-                  <datalist id="serviceaccount-options">
-                    {deploymentOptions.serviceAccounts.map(sa => (
-                      <option key={sa} value={sa} />
-                    ))}
-                  </datalist>
-                </div>
-              )}
             </div>
           </div>
 
@@ -311,9 +385,28 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
               Back
             </button>
           </div>
-          <pre className="manifest-preview-inline">
-            {loadingManifest ? 'Loading manifest...' : generatedManifest}
-          </pre>
+          
+          {isEditMode && manifestExists ? (
+            <div className="manifest-split-view">
+              <div className="manifest-column">
+                <h6>Existing Manifest (from AWS)</h6>
+                <pre className="manifest-preview-split">
+                  {loadingExistingManifest ? 'Loading existing manifest...' : (existingManifest || 'No existing manifest found')}
+                </pre>
+              </div>
+              <div className="manifest-column">
+                <h6>Generated Manifest (from form)</h6>
+                <pre className="manifest-preview-split">
+                  {loadingManifest ? 'Loading manifest...' : generatedManifest}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <pre className="manifest-preview-inline">
+              {loadingManifest ? 'Loading manifest...' : generatedManifest}
+            </pre>
+          )}
+          
           <div className="inline-buttons">
             <button className="save-btn-inline" onClick={handleSave}>
               Save & Close

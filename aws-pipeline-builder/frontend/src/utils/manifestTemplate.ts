@@ -26,6 +26,27 @@ export const generateK8sManifest = async (
       manifest = manifest.replace(/\{\{\s*cpu_request\s*\}\}/g, config.cpuRequest);
       manifest = manifest.replace(/\{\{\s*node_group\s*\}\}/g, config.nodeGroup);
       manifest = manifest.replace(/\{\{\s*target_port\s*\}\}/g, String(config.targetPort || 80));
+      manifest = manifest.replace(/\{\{\s*service_type\s*\}\}/g, config.serviceType || 'ClusterIP');
+      
+      // Handle node affinity section conditionally
+      let nodeAffinitySection = '';
+      if (config.useSpecificNodeGroup) {
+        nodeAffinitySection = `      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: ${config.nodeGroup}
+                    operator: In
+                    values:
+                      - "true"
+      tolerations:
+        - key: ${config.nodeGroup}
+          operator: Equal
+          value: "true"
+          effect: NoSchedule`;
+      }
+      manifest = manifest.replace(/\{\{\s*node_affinity_section\s*\}\}/g, nodeAffinitySection);
       
       // Handle service account conditionally
       if (config.useServiceAccount && config.serviceAccountName) {
@@ -57,5 +78,6 @@ export const getDefaultDeploymentConfig = (): DeploymentConfig => ({
   memoryRequest: '150Mi',
   cpuRequest: '150m',
   nodeGroup: 'cmo-nodegroup',
-  targetPort: 80
+  targetPort: 80,
+  serviceType: 'ClusterIP'
 });

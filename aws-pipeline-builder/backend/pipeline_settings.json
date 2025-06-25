@@ -166,6 +166,11 @@
       8443,
       9000,
       9090
+    ],
+    "serviceTypeOptions": [
+      "ClusterIP",
+      "LoadBalancer",
+      "NodePort"
     ]
   }
 }

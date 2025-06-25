@@ -258,6 +258,28 @@ def generate_k8s_manifest(pipeline_name, ecr_uri, deployment_config):
     manifest = manifest.replace('{{ cpu_request }}', deployment_config.get('cpuRequest', '150m'))
     manifest = manifest.replace('{{ node_group }}', deployment_config.get('nodeGroup', 'cmo-nodegroup'))
     manifest = manifest.replace('{{ target_port }}', str(deployment_config.get('targetPort', 80)))
+    manifest = manifest.replace('{{ service_type }}', deployment_config.get('serviceType', 'ClusterIP'))
+    
+    # Handle node affinity section conditionally
+    if deployment_config.get('useSpecificNodeGroup', False):
+        node_affinity_section = f"""      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: {deployment_config.get('nodeGroup', 'cmo-nodegroup')}
+                    operator: In
+                    values:
+                      - "true"
+      tolerations:
+        - key: {deployment_config.get('nodeGroup', 'cmo-nodegroup')}
+          operator: Equal
+          value: "true"
+          effect: NoSchedule"""
+    else:
+        node_affinity_section = ""
+    
+    manifest = manifest.replace('{{ node_affinity_section }}', node_affinity_section)
     
     return manifest
 
@@ -1730,6 +1752,78 @@ def get_manifest_template():
         return jsonify({
             'success': False,
             'error': f'Failed to load manifest template: {str(e)}'
+        }), 500
+
+@app.route('/api/pipelines/<pipeline_name>/manifest', methods=['GET'])
+def get_pipeline_manifest(pipeline_name):
+    """Get existing Kubernetes manifest for a pipeline from CodeCommit"""
+    try:
+        # Get pipeline metadata to find manifest repo
+        metadata = load_pipeline_metadata()
+        pipeline_meta = None
+        for p in metadata.get('pipelines', []):
+            if p.get('name') == pipeline_name:
+                pipeline_meta = p
+                break
+        
+        if not pipeline_meta:
+            return jsonify({
+                'success': False,
+                'error': 'Pipeline not found in metadata'
+            }), 404
+        
+        # Get manifest repo from pipeline environment variables or default
+        manifest_repo = None
+        env_vars = pipeline_meta.get('environmentVariables', [])
+        for env_var in env_vars:
+            if env_var.get('name') == 'MANIFEST_REPO' and env_var.get('value'):
+                manifest_repo = env_var.get('value')
+                break
+        
+        if not manifest_repo:
+            manifest_repo = 'staging-repo'  # Default
+        
+        print(f"Fetching manifest for {pipeline_name} from {manifest_repo}")
+        
+        # Try to get the manifest file from CodeCommit
+        file_path = f"{pipeline_name}/{pipeline_name}.yml"
+        try:
+            response = codecommit.get_file(
+                repositoryName=manifest_repo,
+                filePath=file_path
+            )
+            
+            # Decode the file content
+            content = response['fileContent'].decode('utf-8')
+            
+            return jsonify({
+                'success': True,
+                'content': content,
+                'repository': manifest_repo,
+                'filePath': file_path,
+                'exists': True
+            })
+            
+        except codecommit.exceptions.FileDoesNotExistException:
+            # Manifest doesn't exist yet - this is not an error
+            # Return success with exists=False so frontend can handle appropriately
+            return jsonify({
+                'success': True,
+                'exists': False,
+                'repository': manifest_repo,
+                'filePath': file_path,
+                'message': f'Manifest file not found at {manifest_repo}/{file_path}'
+            })
+        except codecommit.exceptions.RepositoryDoesNotExistException:
+            return jsonify({
+                'success': False,
+                'error': f'Repository {manifest_repo} does not exist'
+            }), 404
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 
