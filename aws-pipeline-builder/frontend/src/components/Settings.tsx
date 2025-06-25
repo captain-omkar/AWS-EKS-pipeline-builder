@@ -77,78 +77,185 @@ interface SettingsProps {
 /**
  * Settings functional component
  */
+
+// Default template constants
+const DEFAULT_BUILDSPEC_TEMPLATE = {
+  version: 0.2,
+  phases: {
+    install: {
+      commands: [
+        'yum install -y jq unzip',
+        'curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl',
+        'chmod +x ./kubectl',
+        'mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin'
+      ]
+    },
+    pre_build: {
+      commands: [
+        'echo Logging in to Amazon ECR...',
+        'aws --version',
+        'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY',
+        'export KUBECONFIG=$HOME/.kube/config',
+        'aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query \'SecretString\' --output text > Database.json'
+      ]
+    },
+    build: {
+      commands: [
+        'echo Build started on `date`',
+        'IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F":" \'{print $2}\')',
+        'TARGET_DIR=${DOCKER_REPO_DIR:-.}',
+        'echo "✅ Using SERVICE_NAME=$SERVICE_NAME"',
+        'echo "✅ Using TARGET_DIR=$TARGET_DIR"',
+        'echo "✅ Cloning appsettings repo..."',
+        'CREDENTIALS=$(aws sts assume-role --role-arn $CLUSTER_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)',
+        'export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r \'.Credentials.AccessKeyId\')"',
+        'export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r \'.Credentials.SecretAccessKey\')"',
+        'export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r \'.Credentials.SessionToken\')"',
+        'git config --global credential.helper \'!aws codecommit credential-helper $@\'',
+        'git config --global credential.UseHttpPath true',
+        'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO',
+        'cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/',
+        'ls -R $TARGET_DIR',
+        'echo "✅ Replacing placeholders dynamically..."',
+        `for key in $(jq -r 'keys[]' Database.json); do
+  value=$(jq -r --arg k "$key" '.[$k]' Database.json)
+  echo "Replacing $key with $value"
+  sed -i "s|$key|$value|g" $TARGET_DIR/appsettings.json
+done`,
+        'echo "✅ Final appsettings.json:"',
+        'cat $TARGET_DIR/appsettings.json',
+        'echo "✅ Building Docker image..."',
+        'docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .',
+        'docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG'
+      ]
+    },
+    post_build: {
+      commands: [
+        'echo Build completed on `date`',
+        'echo Pushing the Docker image...',
+        'docker push $ECR_REPO_URI:$IMAGE_TAG',
+        'echo Writing image definitions file...',
+        'echo "$Repository_Name-$Branch_Name"',
+        'echo "✅ Assume role for kubectl..."',
+        'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO',
+        'cd $MANIFEST_REPO/$SERVICE_NAME/',
+        'ls',
+        'aws eks update-kubeconfig --name $CLUSTER_NAME',
+        'sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml',
+        'echo "✅ Applying manifests..."',
+        'cat $SERVICE_NAME.yml',
+        'if [ -f "${SERVICE_NAME}-hpa.yml" ]; then cat "${SERVICE_NAME}-hpa.yml"; fi',
+        'if [ -f "${SERVICE_NAME}-kafka.yml" ]; then cat "${SERVICE_NAME}-kafka.yml"; fi',
+        'kubectl apply -f $SERVICE_NAME.yml',
+        'if [ -f "${SERVICE_NAME}-hpa.yml" ]; then kubectl apply -f "${SERVICE_NAME}-hpa.yml"; fi',
+        'if [ -f "${SERVICE_NAME}-kafka.yml" ]; then kubectl apply -f "${SERVICE_NAME}-kafka.yml"; fi'
+      ]
+    }
+  }
+};
+
+const DEFAULT_MANIFEST_TEMPLATE = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-{{ pipeline_name }}
+  namespace: {{ namespace }}
+  labels:
+    app.type: "{{ app_type }}"
+    product: "{{ product }}"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ pipeline_name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ pipeline_name }}
+        app.type: "{{ app_type }}"
+        service.name: "{{ pipeline_name }}"
+        product: "{{ product }}"
+    spec:
+      serviceAccountName: appmesh-comp
+      containers:
+      - name: {{ pipeline_name }}
+        image: {{ image }}
+        imagePullPolicy: Always
+        ports:
+          - containerPort: {{ target_port }}
+        resources:
+          limits:
+            memory: "{{ memory_limit }}"
+            cpu: "{{ cpu_limit }}"
+          requests:
+            memory: "{{ memory_request }}"
+            cpu: "{{ cpu_request }}"
+{{ node_affinity_section }}`;
+
+const DEFAULT_SERVICE_TEMPLATE = `apiVersion: v1
+kind: Service
+metadata:
+  name: {{ pipeline_name }}-service
+  namespace: {{ namespace }}
+  labels:
+    app.type: "{{ app_type }}"
+    product: "{{ product }}"
+spec:
+  selector:
+    app.kubernetes.io/name: {{ pipeline_name }}
+  ports:
+  - name: http
+    port: {{ service_port }}
+    targetPort: {{ target_port }}
+    protocol: TCP
+  type: {{ service_type }}`;
+
+const DEFAULT_HPA_TEMPLATE = `apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ pipeline_name }}-hpa
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ pipeline_name }}
+  minReplicas: {{ min_pods }}
+  maxReplicas: {{ max_pods }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ cpu_threshold }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ memory_threshold }}`;
+
+const DEFAULT_KAFKA_TEMPLATE = `apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ pipeline_name }}-kafka
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    name: {{ pipeline_name }}
+  minReplicaCount: {{ min_pods }}
+  maxReplicaCount: {{ max_pods }}
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: {{ bootstrap_servers }}
+      consumerGroup: {{ consumer_group }}
+      topic: {{ topic_name }}
+      lagThreshold: "10"
+      offsetResetPolicy: latest`;
+
 // Default buildspec template function
 const getDefaultBuildspecTemplate = () => {
-  return {
-    version: 0.2,
-    phases: {
-      install: {
-        commands: [
-          'yum install -y jq unzip',
-          'curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl',
-          'chmod +x ./kubectl',
-          'mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin'
-        ]
-      },
-      pre_build: {
-        commands: [
-          'echo Logging in to Amazon ECR...',
-          'aws --version',
-          'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 465105616690.dkr.ecr.ap-south-1.amazonaws.com',
-          'export KUBECONFIG=$HOME/.kube/config',
-          'aws secretsmanager get-secret-value --secret-id $SMCREDS --query \'SecretString\' --output text > Database.json'
-        ]
-      },
-      build: {
-        commands: [
-          'echo Build started on `date`',
-          'IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F":" \'{print $2}\')',
-          'TARGET_DIR=${REPO_DIR:-.}',
-          'echo "✅ Using SERVICE_NAME=$SERVICE_NAME"',
-          'echo "✅ Using TARGET_DIR=$TARGET_DIR"',
-          'echo "✅ Cloning appsettings repo..."',
-          'CREDENTIALS=$(aws sts assume-role --role-arn $CLUSTER_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)',
-          'export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r \'.Credentials.AccessKeyId\')"',
-          'export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r \'.Credentials.SecretAccessKey\')"',
-          'export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r \'.Credentials.SessionToken\')"',
-          'git config --global credential.helper \'!aws codecommit credential-helper $@\'',
-          'git config --global credential.UseHttpPath true',
-          'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO',
-          'cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/',
-          'ls -R $TARGET_DIR',
-          'echo "✅ Replacing placeholders dynamically..."',
-          '|',
-          '  for key in $(jq -r \'keys[]\' Database.json); do',
-          '    value=$(jq -r --arg k "$key" \'.[$k]\' Database.json)',
-          '    echo "Replacing $key with $value"',
-          '    sed -i "s|$key|$value|g" $TARGET_DIR/appsettings.json',
-          '  done',
-          'echo "✅ Final appsettings.json:"',
-          'cat $TARGET_DIR/appsettings.json',
-          'echo "✅ Building Docker image..."',
-          'docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .',
-          'docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG'
-        ]
-      },
-      post_build: {
-        commands: [
-          'echo Build completed on `date`',
-          'echo Pushing the Docker image...',
-          'docker push $ECR_REPO_URI:$IMAGE_TAG',
-          'echo Writing image definitions file...',
-          'echo "$Repository_Name-$Branch_Name"',
-          'echo "✅ Assume role for kubectl..."',
-          'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO',
-          'cd $MANIFEST_REPO/manifests/',
-          'ls',
-          'aws eks update-kubeconfig --name Staging_cluster',
-          'sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml',
-          'cat $SERVICE_NAME.yml',
-          'kubectl apply -f $SERVICE_NAME.yml'
-        ]
-      }
-    }
-  };
+  return DEFAULT_BUILDSPEC_TEMPLATE;
 };
 
 const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
@@ -603,6 +710,82 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
     }));
   };
 
+  // Helper function to reset template to default and save it
+  const resetTemplateToDefault = async (templateType: 'buildspec' | 'manifest' | 'service' | 'hpa' | 'kafka') => {
+    try {
+      setLoading(true);
+      let response;
+      
+      switch (templateType) {
+        case 'buildspec':
+          const defaultBuildspecYaml = yaml.dump(DEFAULT_BUILDSPEC_TEMPLATE, {
+            indent: 2,
+            lineWidth: -1,
+            noRefs: true,
+            sortKeys: false,
+            noCompatMode: true
+          });
+          setBuildspecYaml(defaultBuildspecYaml);
+          
+          // Save to DynamoDB
+          response = await axios.post(getApiUrl('/api/buildspec-template'), {
+            buildspec: DEFAULT_BUILDSPEC_TEMPLATE
+          });
+          
+          if (response.data.success) {
+            setPipelineSettings(prev => ({ ...prev, buildspec: DEFAULT_BUILDSPEC_TEMPLATE }));
+            alert('Buildspec template reset to default and saved successfully!');
+          }
+          break;
+          
+        case 'manifest':
+          setManifestYaml(DEFAULT_MANIFEST_TEMPLATE);
+          response = await axios.post(getApiUrl('/api/manifest-template'), {
+            template: DEFAULT_MANIFEST_TEMPLATE
+          });
+          if (response.data.success) {
+            alert('Manifest template reset to default and saved successfully!');
+          }
+          break;
+          
+        case 'service':
+          setServiceYaml(DEFAULT_SERVICE_TEMPLATE);
+          response = await axios.post(getApiUrl('/api/service-template'), {
+            template: DEFAULT_SERVICE_TEMPLATE
+          });
+          if (response.data.success) {
+            alert('Service template reset to default and saved successfully!');
+          }
+          break;
+          
+        case 'hpa':
+          setHpaYaml(DEFAULT_HPA_TEMPLATE);
+          response = await axios.post(getApiUrl('/api/hpa-template'), {
+            template: DEFAULT_HPA_TEMPLATE
+          });
+          if (response.data.success) {
+            alert('HPA template reset to default and saved successfully!');
+          }
+          break;
+          
+        case 'kafka':
+          setKafkaYaml(DEFAULT_KAFKA_TEMPLATE);
+          response = await axios.post(getApiUrl('/api/kafka-template'), {
+            template: DEFAULT_KAFKA_TEMPLATE
+          });
+          if (response.data.success) {
+            alert('Kafka template reset to default and saved successfully!');
+          }
+          break;
+      }
+    } catch (error) {
+      console.error(`Error resetting ${templateType} template:`, error);
+      alert(`Failed to reset ${templateType} template to default`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -942,13 +1125,30 @@ phases:
                   lineHeight: '1.5'
                 }}
               />
-              <button 
-                onClick={savePipelineSettings} 
-                disabled={loading}
-                className="save-btn"
-              >
-                Save Buildspec Template
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button 
+                  onClick={savePipelineSettings} 
+                  disabled={loading}
+                  className="save-btn"
+                >
+                  Save Buildspec Template
+                </button>
+                <button 
+                  onClick={() => resetTemplateToDefault('buildspec')}
+                  disabled={loading}
+                  className="reset-btn"
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 20px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Set to Default
+                </button>
+              </div>
             </div>
           )}
           
@@ -1002,13 +1202,30 @@ spec:
                   lineHeight: '1.5'
                 }}
               />
-              <button 
-                onClick={savePipelineSettings} 
-                disabled={loading}
-                className="save-btn"
-              >
-                Save Manifest Template
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button 
+                  onClick={savePipelineSettings} 
+                  disabled={loading}
+                  className="save-btn"
+                >
+                  Save Manifest Template
+                </button>
+                <button 
+                  onClick={() => resetTemplateToDefault('manifest')}
+                  disabled={loading}
+                  className="reset-btn"
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 20px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Set to Default
+                </button>
+              </div>
             </div>
           )}
           
@@ -1050,13 +1267,30 @@ spec:
                   lineHeight: '1.5'
                 }}
               />
-              <button 
-                onClick={savePipelineSettings} 
-                disabled={loading}
-                className="save-btn"
-              >
-                Save Service Template
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button 
+                  onClick={savePipelineSettings} 
+                  disabled={loading}
+                  className="save-btn"
+                >
+                  Save Service Template
+                </button>
+                <button 
+                  onClick={() => resetTemplateToDefault('service')}
+                  disabled={loading}
+                  className="reset-btn"
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 20px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Set to Default
+                </button>
+              </div>
             </div>
           )}
           
@@ -1110,13 +1344,30 @@ spec:
                   lineHeight: '1.5'
                 }}
               />
-              <button 
-                onClick={savePipelineSettings} 
-                disabled={loading}
-                className="save-btn"
-              >
-                Save HPA Template
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button 
+                  onClick={savePipelineSettings} 
+                  disabled={loading}
+                  className="save-btn"
+                >
+                  Save HPA Template
+                </button>
+                <button 
+                  onClick={() => resetTemplateToDefault('hpa')}
+                  disabled={loading}
+                  className="reset-btn"
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 20px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Set to Default
+                </button>
+              </div>
             </div>
           )}
           
@@ -1163,13 +1414,30 @@ spec:
                   lineHeight: '1.5'
                 }}
               />
-              <button 
-                onClick={savePipelineSettings} 
-                disabled={loading}
-                className="save-btn"
-              >
-                Save Kafka Template
-              </button>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                <button 
+                  onClick={savePipelineSettings} 
+                  disabled={loading}
+                  className="save-btn"
+                >
+                  Save Kafka Template
+                </button>
+                <button 
+                  onClick={() => resetTemplateToDefault('kafka')}
+                  disabled={loading}
+                  className="reset-btn"
+                  style={{
+                    backgroundColor: '#f44336',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 20px',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Set to Default
+                </button>
+              </div>
             </div>
           )}
           
