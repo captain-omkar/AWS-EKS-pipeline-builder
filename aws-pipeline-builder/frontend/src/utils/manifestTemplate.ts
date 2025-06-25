@@ -15,7 +15,7 @@ export const generateK8sManifest = async (
       let manifest = response.data.template;
       
       // Replace all template variables - the exact format from deployment.yml
-      manifest = manifest.replace(/\{\{\s*pipeline_name\s*\}\}/g, pipelineName);
+      manifest = manifest.replace(/\{\{\s*pipeline_name\s*\}\}/g, config.serviceName || pipelineName);
       manifest = manifest.replace(/\{\{\s*namespace\s*\}\}/g, config.namespace);
       manifest = manifest.replace(/\{\{\s*app_type\s*\}\}/g, config.appType);
       manifest = manifest.replace(/\{\{\s*product\s*\}\}/g, config.product);
@@ -71,6 +71,7 @@ export const generateK8sManifest = async (
 
 export const getDefaultDeploymentConfig = (): DeploymentConfig => ({
   namespace: 'staging-locobuzz',
+  serviceName: '',
   appType: 'csharp',
   product: 'cmo',
   memoryLimit: '300Mi',

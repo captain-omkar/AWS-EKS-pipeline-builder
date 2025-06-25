@@ -245,9 +245,12 @@ def generate_k8s_manifest(pipeline_name, ecr_uri, deployment_config):
     # Load the manifest template
     template = load_manifest_template()
     
+    # Use serviceName if provided, otherwise fall back to pipeline_name
+    service_name = deployment_config.get('serviceName', pipeline_name)
+    
     # Replace template variables with actual values
     manifest = template
-    manifest = manifest.replace('{{ pipeline_name }}', pipeline_name)
+    manifest = manifest.replace('{{ pipeline_name }}', service_name)
     manifest = manifest.replace('{{ namespace }}', deployment_config.get('namespace', 'staging-locobuzz'))
     manifest = manifest.replace('{{ app_type }}', deployment_config.get('appType', 'csharp'))
     manifest = manifest.replace('{{ product }}', deployment_config.get('product', 'cmo'))
@@ -283,20 +286,20 @@ def generate_k8s_manifest(pipeline_name, ecr_uri, deployment_config):
     
     return manifest
 
-def generate_hpa_manifest(pipeline_name, namespace, scaling_config):
+def generate_hpa_manifest(pipeline_name, service_name, namespace, scaling_config):
     """
     Generate HPA (Horizontal Pod Autoscaler) manifest.
     """
     hpa_manifest = f"""apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {pipeline_name}
+  name: {service_name}-hpa
   namespace: {namespace}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: deployment-{pipeline_name}
+    name: {service_name}
   minReplicas: {scaling_config.get('minPods', 1)}
   maxReplicas: {scaling_config.get('maxPods', 10)}
   metrics:
@@ -315,18 +318,18 @@ spec:
     
     return hpa_manifest
 
-def generate_kafka_scaling_manifest(pipeline_name, namespace, scaling_config):
+def generate_kafka_scaling_manifest(pipeline_name, service_name, namespace, scaling_config):
     """
     Generate KEDA ScaledObject manifest for Kafka-based scaling.
     """
     kafka_manifest = f"""apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: {pipeline_name}
+  name: {service_name}-kafka
   namespace: {namespace}
 spec:
   scaleTargetRef:
-    name: deployment-{pipeline_name}
+    name: {service_name}
   minReplicaCount: {scaling_config.get('minPods', 1)}
   maxReplicaCount: {scaling_config.get('maxPods', 10)}
   triggers:
@@ -340,16 +343,16 @@ spec:
     
     return kafka_manifest
 
-def generate_scaling_manifest(pipeline_name, namespace, scaling_config):
+def generate_scaling_manifest(pipeline_name, service_name, namespace, scaling_config):
     """
     Generate scaling manifest based on the type (HPA or Kafka).
     """
     scaling_type = scaling_config.get('type', 'hpa')
     
     if scaling_type == 'hpa':
-        return generate_hpa_manifest(pipeline_name, namespace, scaling_config)
+        return generate_hpa_manifest(pipeline_name, service_name, namespace, scaling_config)
     else:
-        return generate_kafka_scaling_manifest(pipeline_name, namespace, scaling_config)
+        return generate_kafka_scaling_manifest(pipeline_name, service_name, namespace, scaling_config)
 
 def upload_manifest_to_codecommit(repo_name, pipeline_name, deployment_config, ecr_uri):
     """
@@ -361,11 +364,11 @@ def upload_manifest_to_codecommit(repo_name, pipeline_name, deployment_config, e
     commit_message = f'Add/Update Kubernetes manifest for {pipeline_name} pipeline'
     return upload_file_to_codecommit(repo_name, file_path, manifest_content, commit_message)
 
-def upload_scaling_manifest_to_codecommit(repo_name, pipeline_name, namespace, scaling_config):
+def upload_scaling_manifest_to_codecommit(repo_name, pipeline_name, service_name, namespace, scaling_config):
     """
     Generate and upload scaling manifest (HPA or KEDA) to CodeCommit repository.
     """
-    scaling_manifest = generate_scaling_manifest(pipeline_name, namespace, scaling_config)
+    scaling_manifest = generate_scaling_manifest(pipeline_name, service_name, namespace, scaling_config)
     # Use different filename based on scaling type, in the same pipeline folder
     scaling_type = scaling_config.get('type', 'hpa')
     file_path = f"{pipeline_name}/{pipeline_name}-{scaling_type}.yml"
@@ -909,9 +912,11 @@ def create_pipelines():
                 if scaling_config and deployment_config and manifest_repo:
                     try:
                         namespace = deployment_config.get('namespace', 'staging-locobuzz')
+                        service_name = deployment_config.get('serviceName', pipeline_name)
                         commit_id = upload_scaling_manifest_to_codecommit(
                             repo_name=manifest_repo,
                             pipeline_name=pipeline_name,
+                            service_name=service_name,
                             namespace=namespace,
                             scaling_config=scaling_config
                         )
@@ -1792,9 +1797,11 @@ def update_pipeline(pipeline_name):
             if manifest_repo:
                 try:
                     namespace = deployment_config.get('namespace', 'staging-locobuzz')
+                    service_name = deployment_config.get('serviceName', pipeline_name)
                     upload_scaling_manifest_to_codecommit(
                         repo_name=manifest_repo,
                         pipeline_name=pipeline_name,
+                        service_name=service_name,
                         namespace=namespace,
                         scaling_config=scaling_config
                     )

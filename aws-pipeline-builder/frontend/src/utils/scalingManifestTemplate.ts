@@ -2,19 +2,20 @@ import { HPAConfig, KafkaScalingConfig } from '../types/Pipeline';
 
 export const generateHPAManifest = (
   pipelineName: string,
+  serviceName: string,
   namespace: string,
   config: HPAConfig
 ): string => {
   const hpaManifest = `apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: ${pipelineName}
+  name: ${serviceName}-hpa
   namespace: ${namespace}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: deployment-${pipelineName}
+    name: ${serviceName}
   minReplicas: ${config.minPods}
   maxReplicas: ${config.maxPods}
   metrics:
@@ -36,17 +37,18 @@ spec:
 
 export const generateKafkaScalingManifest = (
   pipelineName: string,
+  serviceName: string,
   namespace: string,
   config: KafkaScalingConfig
 ): string => {
   const kafkaManifest = `apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: ${pipelineName}
+  name: ${serviceName}-kafka
   namespace: ${namespace}
 spec:
   scaleTargetRef:
-    name: deployment-${pipelineName}
+    name: ${serviceName}
   minReplicaCount: ${config.minPods}
   maxReplicaCount: ${config.maxPods}
   triggers:
@@ -63,12 +65,13 @@ spec:
 
 export const generateScalingManifest = (
   pipelineName: string,
+  serviceName: string,
   namespace: string,
   config: HPAConfig | KafkaScalingConfig
 ): string => {
   if (config.type === 'hpa') {
-    return generateHPAManifest(pipelineName, namespace, config);
+    return generateHPAManifest(pipelineName, serviceName, namespace, config);
   } else {
-    return generateKafkaScalingManifest(pipelineName, namespace, config);
+    return generateKafkaScalingManifest(pipelineName, serviceName, namespace, config);
   }
 };

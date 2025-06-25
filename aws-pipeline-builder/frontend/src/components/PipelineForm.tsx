@@ -102,6 +102,7 @@ const PipelineForm: React.FC = () => {
   const [editingAppsettings, setEditingAppsettings] = useState<boolean>(false); // Edit mode toggle
   const [appsettingsError, setAppsettingsError] = useState<string>(''); // Error messages
   const [appsettingsFetched, setAppsettingsFetched] = useState<boolean>(false); // Prevent repeated API calls
+  const [appsettingsInputMode, setAppsettingsInputMode] = useState<'upload' | 'paste'>('upload'); // Input mode for create mode
   
   // Lock Management State
   const [userId] = useState(() => {
@@ -894,6 +895,76 @@ const PipelineForm: React.FC = () => {
                   )}
                 </label>
                 <div className="file-upload-section">
+                  {/* Input mode toggle for create mode */}
+                  {!isEditMode && (
+                    <div style={{ marginBottom: '15px' }}>
+                      <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAppsettingsInputMode('upload');
+                            // Clear pasted content when switching to upload mode
+                            updatePipeline(pIndex, 'appsettingsContent', undefined);
+                          }}
+                          style={{
+                            backgroundColor: appsettingsInputMode === 'upload' ? '#2196f3' : '#f5f5f5',
+                            color: appsettingsInputMode === 'upload' ? 'white' : '#333',
+                            border: '1px solid #ddd',
+                            padding: '8px 16px',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Upload File
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAppsettingsInputMode('paste');
+                            // Clear uploaded file when switching to paste mode
+                            updatePipeline(pIndex, 'appsettingsFile', undefined);
+                          }}
+                          style={{
+                            backgroundColor: appsettingsInputMode === 'paste' ? '#2196f3' : '#f5f5f5',
+                            color: appsettingsInputMode === 'paste' ? 'white' : '#333',
+                            border: '1px solid #ddd',
+                            padding: '8px 16px',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Copy & Paste
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Paste mode for create mode */}
+                  {!isEditMode && appsettingsInputMode === 'paste' && (
+                    <div style={{ marginBottom: '15px' }}>
+                      <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                        Paste Appsettings Content:
+                      </label>
+                      <textarea
+                        value={pipeline.appsettingsContent || ''}
+                        onChange={(e) => updatePipeline(pIndex, 'appsettingsContent', e.target.value)}
+                        rows={15}
+                        style={{
+                          width: '100%',
+                          fontFamily: 'monospace',
+                          fontSize: '14px',
+                          border: '1px solid #ddd',
+                          borderRadius: '4px',
+                          padding: '10px'
+                        }}
+                        placeholder="Paste your appsettings.json content here..."
+                      />
+                      <small style={{ color: '#666' }}>
+                        Paste your appsettings.json content above. This will be stored in the CodeCommit repository.
+                      </small>
+                    </div>
+                  )}
+                  
                   {isEditMode && (
                     <div style={{ marginBottom: '15px' }}>
                       <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
@@ -958,24 +1029,29 @@ const PipelineForm: React.FC = () => {
                     </div>
                   )}
                   
-                  <input
-                    key={`appsettings-${pIndex}-${pipeline.appsettingsFile?.name || 'empty'}`}
-                    type="file"
-                    accept=".json,application/json"
-                    onChange={(e) => handleAppsettingsUpload(pIndex, e.target.files?.[0] || null)}
-                    style={isEditMode ? { backgroundColor: '#fff3e0', border: '2px solid #ff9800' } : {}}
-                  />
-                  {pipeline.appsettingsFile && (
-                    <span className="file-info">
-                      Selected: {pipeline.appsettingsFile.name}
-                    </span>
+                  {/* File upload section - show in edit mode or when upload mode is selected in create mode */}
+                  {(isEditMode || (!isEditMode && appsettingsInputMode === 'upload')) && (
+                    <>
+                      <input
+                        key={`appsettings-${pIndex}-${pipeline.appsettingsFile?.name || 'empty'}`}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={(e) => handleAppsettingsUpload(pIndex, e.target.files?.[0] || null)}
+                        style={isEditMode ? { backgroundColor: '#fff3e0', border: '2px solid #ff9800' } : {}}
+                      />
+                      {pipeline.appsettingsFile && (
+                        <span className="file-info">
+                          Selected: {pipeline.appsettingsFile.name}
+                        </span>
+                      )}
+                      <small className="help-text">
+                        {isEditMode 
+                          ? 'Or upload a new appsettings.json file to completely replace the existing one'
+                          : 'Upload appsettings.json to be stored in CodeCommit repository specified in APPSETTINGS_REPO environment variable'
+                        }
+                      </small>
+                    </>
                   )}
-                  <small className="help-text">
-                    {isEditMode 
-                      ? 'Or upload a new appsettings.json file to completely replace the existing one'
-                      : 'Upload appsettings.json to be stored in CodeCommit repository specified in APPSETTINGS_REPO environment variable'
-                    }
-                  </small>
                 </div>
               </div>
 

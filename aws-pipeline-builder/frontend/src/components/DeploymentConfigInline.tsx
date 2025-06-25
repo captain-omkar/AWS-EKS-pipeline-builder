@@ -140,6 +140,18 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
             <h5>Basic Configuration</h5>
             <div className="inline-form-grid" style={{gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px'}}>
               <div className="inline-field">
+                <label>Service Name:</label>
+                <input
+                  type="text"
+                  value={deploymentConfig.serviceName}
+                  onChange={(e) => handleInputChange('serviceName', e.target.value)}
+                  placeholder="Enter Kubernetes service name"
+                  style={{width: '100%'}}
+                  required
+                />
+              </div>
+              
+              <div className="inline-field">
                 <label>Namespace:</label>
                 <input
                   type="text"

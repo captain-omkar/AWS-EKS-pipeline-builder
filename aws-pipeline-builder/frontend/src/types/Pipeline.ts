@@ -25,6 +25,7 @@ export interface BuildspecConfig {
 
 export interface DeploymentConfig {
   namespace: string;
+  serviceName: string;
   appType: string;
   product: string;
   memoryLimit: string;
