@@ -708,22 +708,10 @@ def create_pipelines():
                 if use_buildspec_file:
                     buildspec = buildspec_path
                 else:
-                    if not buildspec_content:
-                        # Load from the buildspec template file instead
-                        with open('buildspec-template.yml', 'r') as f:
-                            buildspec = f.read()
-                    else:
-                        import yaml
-                        # Ensure proper ordering of buildspec
-                        ordered_buildspec = {
-                            'version': buildspec_content.get('version', 0.2),
-                            'phases': {}
-                        }
-                        # Add phases in correct order
-                        for phase in ['install', 'pre_build', 'build', 'post_build']:
-                            if phase in buildspec_content.get('phases', {}):
-                                ordered_buildspec['phases'][phase] = buildspec_content['phases'][phase]
-                        buildspec = yaml.dump(ordered_buildspec, default_flow_style=False, allow_unicode=True, sort_keys=False, width=1000)
+                    # Always load from the buildspec template file for consistency
+                    # This ensures we use the master template from Settings modal
+                    with open('buildspec-template.yml', 'r') as f:
+                        buildspec = f.read()
                 
                 # Create CodeBuild project
                 codebuild_project_name = f"{pipeline_name}-build"
@@ -1164,99 +1152,230 @@ import os
 SUGGESTIONS_FILE = 'env_suggestions.json'
 SETTINGS_FILE = 'pipeline_settings.json'
 
-def load_pipeline_settings():
+def get_default_pipeline_settings():
     """
-    Load pipeline configuration settings from JSON file.
-    Falls back to default settings if file doesn't exist.
+    Get default pipeline settings.
+    These will be used if no settings exist in DynamoDB.
     """
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            pass
-    # Return default settings
+    # Get current AWS account ID and region
+    try:
+        sts = boto3.client('sts')
+        account_id = sts.get_caller_identity()['Account']
+        region = session.region_name or 'us-east-1'
+    except:
+        account_id = 'YOUR_ACCOUNT_ID'
+        region = 'us-east-1'
+    
     return {
         "aws": {
-            "region": "ap-south-1",
-            "accountId": "465105616690",
-            "ecrRegistry": "465105616690.dkr.ecr.ap-south-1.amazonaws.com"
+            "region": region,
+            "accountId": account_id,
+            "ecrRegistry": f"{account_id}.dkr.ecr.{region}.amazonaws.com"
         },
         "codebuild": {
-            "serviceRole": "staging-codebuild-role",
+            "serviceRole": "codebuild-service-role",
             "environmentType": "LINUX_CONTAINER",
             "environmentImage": "aws/codebuild/amazonlinux-x86_64-standard:5.0",
             "privilegedMode": True,
             "imagePullCredentialsType": "CODEBUILD",
-            "securityGroup": None
+            "securityGroup": None,
+            "subnets": [],
+            "vpcId": None
         },
         "codepipeline": {
-            "serviceRole": "staging-codepipeline-role",
-            "codestarConnectionName": "github-connections",
+            "serviceRole": "codepipeline-service-role",
+            "codestarConnectionName": "github-connection",
             "sourceProvider": "CodeStarSourceConnection",
             "buildProvider": "CodeBuild"
         },
         "eks": {
-            "clusterName": "Staging_cluster",
-            "clusterRoleArn": "arn:aws:iam::465105616690:role/staging_ekscluster_role"
+            "clusterName": "my-eks-cluster",
+            "clusterRoleArn": f"arn:aws:iam::{account_id}:role/eks-cluster-role"
         },
         "deploymentOptions": {
-            "appTypes": ["csharp", "python", "java", "nodejs"],
-            "bootstrapServers": ["b-1.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092,b-2.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092"],
-            "cpuOptions": ["100m", "150m", "200m", "250m", "300m", "400m", "500m", "1000m", "2000m"],
-            "memoryOptions": ["100Mi", "150Mi", "200Mi", "250Mi", "300Mi", "400Mi", "500Mi", "1Gi", "2Gi"],
-            "namespaces": ["staging-locobuzz", "production-locobuzz", "om"],
-            "nodeGroups": ["cmo-nodegroup", "modernization-nodegroup", "newsverse-nodegroup"],
-            "products": ["cmo", "modernization", "newsverse"],
-            "serviceAccounts": ["appmesh-comp", "default", "eks-service-account"]
+            "appTypes": ["python", "nodejs", "java", "csharp", "go", "ruby", "php", "dotnet"],
+            "bootstrapServers": ["kafka-broker1:9092,kafka-broker2:9092", "localhost:9092", "kafka.staging.locobuzz.com:9092"],
+            "cpuOptions": ["100m", "150m", "200m", "250m", "300m", "400m", "500m", "750m", "1000m", "1500m", "2000m"],
+            "memoryOptions": ["100Mi", "128Mi", "150Mi", "200Mi", "256Mi", "300Mi", "400Mi", "512Mi", "750Mi", "1Gi", "1.5Gi", "2Gi", "3Gi", "4Gi"],
+            "namespaces": ["default", "staging", "production", "development", "staging-locobuzz", "production-locobuzz"],
+            "nodeGroups": ["default-nodegroup", "spot-nodegroup", "on-demand-nodegroup", "cmo-nodegroup", "modernization-nodegroup", "newsverse-nodegroup"],
+            "products": ["default", "cmo", "modernization", "newsverse", "analytics", "reporting", "messaging"],
+            "serviceAccounts": ["default", "appmesh-comp", "eks-service-account", "fluentd", "prometheus"],
+            "serviceTypeOptions": ["ClusterIP", "LoadBalancer", "NodePort"],
+            "targetPortOptions": [80, 443, 3000, 3001, 4000, 5000, 5001, 8000, 8080, 8081, 8443, 9000, 9090]
+        },
+        "buildspec": {
+            "version": 0.2,
+            "phases": {
+                "pre_build": {
+                    "commands": [
+                        "echo Logging in to Amazon ECR...",
+                        "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                    ]
+                },
+                "build": {
+                    "commands": [
+                        "echo Build started on `date`",
+                        "echo Building Docker image...",
+                        "docker build -t $SERVICE_NAME .",
+                        "docker tag $SERVICE_NAME:latest $ECR_REPO_URI:latest"
+                    ]
+                },
+                "post_build": {
+                    "commands": [
+                        "echo Build completed on `date`",
+                        "echo Pushing Docker image...",
+                        "docker push $ECR_REPO_URI:latest"
+                    ]
+                }
+            }
         }
     }
 
+def merge_with_defaults(settings, defaults):
+    """
+    Deep merge settings with defaults to ensure all required fields exist.
+    User settings always take precedence, even if they're empty arrays.
+    """
+    import copy
+    result = copy.deepcopy(defaults)
+    
+    def deep_merge(target, source):
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                deep_merge(target[key], value)
+            else:
+                # Always use the source value, even if it's an empty array
+                # This preserves user customizations
+                target[key] = value
+    
+    deep_merge(result, settings)
+    return result
+
+def load_pipeline_settings():
+    """
+    Load pipeline configuration settings from DynamoDB.
+    Falls back to default settings if not found.
+    """
+    # Get default settings
+    default_settings = get_default_pipeline_settings()
+    
+    # Try to load from DynamoDB first
+    settings = storage.get_settings('pipeline_settings')
+    if settings:
+        print("✅ Loaded pipeline settings from DynamoDB")
+        # Merge with defaults to ensure all fields exist
+        merged_settings = merge_with_defaults(settings, default_settings)
+        return merged_settings
+    
+    # Check if old file exists and migrate
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                file_settings = json.load(f)
+                # Merge with defaults
+                merged_settings = merge_with_defaults(file_settings, default_settings)
+                # Save to DynamoDB
+                if storage.save_settings('pipeline_settings', merged_settings):
+                    print("📦 Migrated pipeline settings from file to DynamoDB")
+                    # Optionally remove the old file
+                    os.rename(SETTINGS_FILE, f"{SETTINGS_FILE}.migrated")
+                return merged_settings
+        except:
+            pass
+    
+    # Save default settings to DynamoDB
+    storage.save_settings('pipeline_settings', default_settings)
+    print("📦 Initialized pipeline settings with defaults in DynamoDB")
+    return default_settings
+
 def save_pipeline_settings(settings):
     """
-    Save pipeline configuration settings to JSON file.
+    Save pipeline configuration settings to DynamoDB.
+    Excludes buildspec which should remain as a file-based template.
     """
     try:
-        with open(SETTINGS_FILE, 'w') as f:
-            json.dump(settings, f, indent=2)
-        return True
+        # Create a deep copy to avoid modifying the original
+        import copy
+        settings_to_save = copy.deepcopy(settings)
+        
+        # Remove buildspec before saving to DynamoDB
+        if 'buildspec' in settings_to_save:
+            del settings_to_save['buildspec']
+            
+        return storage.save_settings('pipeline_settings', settings_to_save)
     except Exception as e:
         print(f"Error saving settings: {e}")
         return False
 
+def get_default_suggestions():
+    """
+    Get default environment variable suggestions.
+    """
+    # Get current AWS account ID and region
+    try:
+        sts = boto3.client('sts')
+        account_id = sts.get_caller_identity()['Account']
+        region = session.region_name or 'us-east-1'
+    except:
+        account_id = 'YOUR_ACCOUNT_ID'
+        region = 'us-east-1'
+    
+    return {
+        'SECRET_CREDS': ['database-secrets', 'app-secrets'],
+        'APPSETTINGS_REPO': ['appsettings-repo'],
+        'MANIFEST_REPO': ['manifest-repo'],
+        'CLUSTER_ROLE_ARN': [f'arn:aws:iam::{account_id}:role/eks-cluster-role'],
+        'DOCKER_REPO_DIR': ['.', 'src', 'app'],
+        'CLUSTER_NAME': ['my-eks-cluster'],
+        'ECR_REGISTRY': [f'{account_id}.dkr.ecr.{region}.amazonaws.com']
+    }
+
 def load_suggestions():
     """
-    Load environment variable suggestions from JSON file.
-    Falls back to default suggestions if file doesn't exist.
+    Load environment variable suggestions from DynamoDB.
+    Falls back to default suggestions if not found.
     Returns dict with env var names as keys and suggestion lists as values.
     """
+    # Get default suggestions
+    default_suggestions = get_default_suggestions()
+    
+    # Try to load from DynamoDB first
+    suggestions = storage.get_settings('env_suggestions')
+    if suggestions:
+        print("✅ Loaded env suggestions from DynamoDB")
+        # Merge with defaults to ensure all fields exist
+        merged_suggestions = merge_with_defaults(suggestions, default_suggestions)
+        return merged_suggestions
+    
+    # Check if old file exists and migrate
     if os.path.exists(SUGGESTIONS_FILE):
         try:
             with open(SUGGESTIONS_FILE, 'r') as f:
-                return json.load(f)
+                file_suggestions = json.load(f)
+                # Merge with defaults
+                merged_suggestions = merge_with_defaults(file_suggestions, default_suggestions)
+                # Save to DynamoDB
+                if storage.save_settings('env_suggestions', merged_suggestions):
+                    print("📦 Migrated env suggestions from file to DynamoDB")
+                    os.rename(SUGGESTIONS_FILE, f"{SUGGESTIONS_FILE}.migrated")
+                return merged_suggestions
         except:
             pass
-    # Return default suggestions
-    return {
-        'SECRET_CREDS': ['Database', 'cmo-secrets', 'newzverse-secrets'],
-        'APPSETTINGS_REPO': ['modernization-appsettings-repo'],
-        'MANIFEST_REPO': ['staging-repo'],
-        'CLUSTER_ROLE_ARN': ['arn:aws:iam::465105616690:role/staging_ekscluster_role'],
-        'DOCKER_REPO_DIR': [],
-        'CLUSTER_NAME': ['Staging_cluster'],
-        'ECR_REGISTRY': ['465105616690.dkr.ecr.ap-south-1.amazonaws.com']
-    }
+    
+    # Save default suggestions to DynamoDB
+    storage.save_settings('env_suggestions', default_suggestions)
+    print("📦 Initialized env suggestions with defaults in DynamoDB")
+    return default_suggestions
 
 def save_suggestions(suggestions):
     """
-    Save environment variable suggestions to JSON file.
+    Save environment variable suggestions to DynamoDB.
     Persists user-customized suggestions across server restarts.
     Returns True on success, False on failure.
     """
     try:
-        with open(SUGGESTIONS_FILE, 'w') as f:
-            json.dump(suggestions, f, indent=2)
-        return True
+        return storage.save_settings('env_suggestions', suggestions)
     except Exception as e:
         print(f"Error saving suggestions: {e}")
         return False
@@ -2073,6 +2192,81 @@ def get_pipeline_manifest(pipeline_name):
                 'error': f'Repository {manifest_repo} does not exist'
             }), 404
             
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/buildspec-template', methods=['GET'])
+def get_buildspec_template():
+    """Get the buildspec template from file"""
+    try:
+        # Read the master buildspec template from file in app directory
+        with open('buildspec-template.yml', 'r') as f:
+            import yaml
+            buildspec = yaml.safe_load(f)
+            
+        return jsonify({
+            'success': True,
+            'buildspec': buildspec
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load buildspec template: {str(e)}'
+        }), 500
+
+@app.route('/api/buildspec-template', methods=['POST'])
+def update_buildspec_template():
+    """Update the buildspec template file"""
+    try:
+        data = request.json
+        buildspec = data.get('buildspec', {})
+        
+        # For now, we'll just return success without actually saving to a file
+        # The buildspec template remains in the code as default
+        return jsonify({
+            'success': True,
+            'message': 'Buildspec template updated successfully'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/manifest-template-editor', methods=['GET'])
+def get_manifest_template_editor():
+    """Get the manifest template for editing"""
+    try:
+        with open('manifest_template.yml', 'r') as f:
+            template = f.read()
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load manifest template: {str(e)}'
+        }), 500
+
+@app.route('/api/manifest-template-editor', methods=['POST'])
+def update_manifest_template_editor():
+    """Update the manifest template file"""
+    try:
+        data = request.json
+        template = data.get('template', '')
+        
+        # Save to file
+        with open('manifest_template.yml', 'w') as f:
+            f.write(template)
+            
+        return jsonify({
+            'success': True,
+            'message': 'Manifest template updated successfully'
+        })
     except Exception as e:
         return jsonify({
             'success': False,

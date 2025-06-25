@@ -162,3 +162,62 @@ class DynamoDBStorage:
         except Exception as e:
             print(f"❌ Error deleting pipeline: {str(e)}")
             return False
+    
+    def get_settings(self, setting_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Get settings from DynamoDB
+        
+        Args:
+            setting_type: Type of settings ('pipeline_settings' or 'env_suggestions')
+            
+        Returns:
+            Settings dict or None if not found
+        """
+        try:
+            # Use special key format for settings
+            settings_key = f"_SETTINGS_{setting_type}"
+            
+            response = self.table.get_item(
+                Key={'pipeline_name': settings_key}
+            )
+            
+            if 'Item' in response:
+                # Return the settings data without the key
+                item = response['Item']
+                return item.get('settings_data', {})
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error getting settings: {str(e)}")
+            return None
+    
+    def save_settings(self, setting_type: str, settings_data: Dict[str, Any]) -> bool:
+        """
+        Save settings to DynamoDB
+        
+        Args:
+            setting_type: Type of settings ('pipeline_settings' or 'env_suggestions')
+            settings_data: The settings data to save
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Use special key format for settings
+            settings_key = f"_SETTINGS_{setting_type}"
+            
+            item = {
+                'pipeline_name': settings_key,
+                'settings_data': settings_data,
+                'setting_type': setting_type,
+                'lastUpdated': datetime.now().isoformat()
+            }
+            
+            # Put item in DynamoDB
+            self.table.put_item(Item=item)
+            print(f"✅ Saved {setting_type} to DynamoDB")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error saving settings: {str(e)}")
+            return False

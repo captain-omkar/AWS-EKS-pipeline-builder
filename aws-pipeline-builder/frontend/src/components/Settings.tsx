@@ -221,28 +221,42 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
     if (isOpen) {
       fetchSuggestions();
       fetchPipelineSettings();
+      fetchBuildspecTemplate();
     }
   }, [isOpen]);
   
-  // Initialize buildspec YAML if it's empty when switching to buildspec tab
-  useEffect(() => {
-    if (activeTab === 'buildspec' && !buildspecYaml) {
-      // Try to use the buildspec from pipelineSettings first
-      if (pipelineSettings.buildspec && Object.keys(pipelineSettings.buildspec).length > 0) {
+
+  const fetchSuggestions = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/env-suggestions'));
+      if (response.data.success) {
+        setSuggestions(response.data.suggestions);
+      }
+    } catch (error) {
+      console.error('Error fetching suggestions:', error);
+    }
+  };
+
+  const fetchBuildspecTemplate = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/buildspec-template'));
+      if (response.data.success && response.data.buildspec) {
+        // Convert buildspec to YAML for editing
+        const buildspec = response.data.buildspec;
         const orderedBuildspec: any = {};
         
         // Version should come first
-        if (pipelineSettings.buildspec.version !== undefined) {
-          orderedBuildspec.version = pipelineSettings.buildspec.version;
+        if (buildspec.version !== undefined) {
+          orderedBuildspec.version = buildspec.version;
         }
         
         // Then phases in the correct order
-        if (pipelineSettings.buildspec.phases) {
+        if (buildspec.phases) {
           orderedBuildspec.phases = {};
           const phaseOrder = ['install', 'pre_build', 'build', 'post_build'];
           phaseOrder.forEach(phase => {
-            if ((pipelineSettings.buildspec.phases as any)[phase]) {
-              orderedBuildspec.phases[phase] = (pipelineSettings.buildspec.phases as any)[phase];
+            if ((buildspec.phases as any)[phase]) {
+              orderedBuildspec.phases[phase] = (buildspec.phases as any)[phase];
             }
           });
         }
@@ -254,18 +268,12 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
           sortKeys: false
         });
         setBuildspecYaml(yamlStr);
-      }
-    }
-  }, [activeTab, pipelineSettings.buildspec]);
-
-  const fetchSuggestions = async () => {
-    try {
-      const response = await axios.get(getApiUrl('/api/env-suggestions'));
-      if (response.data.success) {
-        setSuggestions(response.data.suggestions);
+        
+        // Also update pipelineSettings with the template buildspec
+        setPipelineSettings(prev => ({ ...prev, buildspec: buildspec }));
       }
     } catch (error) {
-      console.error('Error fetching suggestions:', error);
+      console.error('Error fetching buildspec template:', error);
     }
   };
 
@@ -280,58 +288,40 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
         
         // Update pipeline settings without deploymentOptions
         const { deploymentOptions: loadedDeploymentOptions, ...settingsWithoutDeployment } = loadedSettings;
-        setPipelineSettings(settingsWithoutDeployment);
+        
+        // Ensure all required properties exist with defaults
+        setPipelineSettings({
+          aws: settingsWithoutDeployment.aws || {
+            region: 'us-east-1',
+            accountId: '',
+            ecrRegistry: ''
+          },
+          codebuild: settingsWithoutDeployment.codebuild || {
+            serviceRole: '',
+            environmentType: 'LINUX_CONTAINER',
+            environmentImage: 'aws/codebuild/amazonlinux-x86_64-standard:5.0',
+            privilegedMode: true,
+            imagePullCredentialsType: 'CODEBUILD',
+            securityGroup: null,
+            vpcId: null,
+            subnets: null
+          },
+          codepipeline: settingsWithoutDeployment.codepipeline || {
+            serviceRole: '',
+            codestarConnectionName: '',
+            sourceProvider: 'CodeStarSourceConnection',
+            buildProvider: 'CodeBuild'
+          },
+          eks: settingsWithoutDeployment.eks || {
+            clusterName: '',
+            clusterRoleArn: null
+          },
+          buildspec: {} // Buildspec will be loaded separately from template
+        });
         
         // Update deployment options separately if they exist
         if (loadedDeploymentOptions) {
           setDeploymentOptions(loadedDeploymentOptions);
-        }
-        // Convert buildspec to YAML for editing
-        if (response.data.settings.buildspec && Object.keys(response.data.settings.buildspec).length > 0) {
-          try {
-            // Ensure correct order: version first, then phases in correct order
-            const buildspec = response.data.settings.buildspec;
-            const orderedBuildspec: any = {};
-            
-            // Version should come first
-            if (buildspec.version !== undefined) {
-              orderedBuildspec.version = buildspec.version;
-            }
-            
-            // Then phases in the correct order
-            if (buildspec.phases) {
-              orderedBuildspec.phases = {};
-              const phaseOrder = ['install', 'pre_build', 'build', 'post_build'];
-              phaseOrder.forEach(phase => {
-                if ((buildspec.phases as any)[phase]) {
-                  orderedBuildspec.phases[phase] = (buildspec.phases as any)[phase];
-                }
-              });
-            }
-            
-            const yamlStr = yaml.dump(orderedBuildspec, {
-              indent: 2,
-              lineWidth: -1,
-              noRefs: true,
-              sortKeys: false
-            });
-            console.log('Generated YAML:', yamlStr);
-            setBuildspecYaml(yamlStr);
-          } catch (e) {
-            console.error('Error converting buildspec to YAML:', e);
-            setBuildspecYaml('');
-          }
-        } else {
-          console.log('No buildspec found in settings');
-          // If no buildspec exists, provide a default template
-          const defaultBuildspec = getDefaultBuildspecTemplate();
-          const yamlStr = yaml.dump(defaultBuildspec, {
-            indent: 2,
-            lineWidth: -1,
-            noRefs: true,
-            sortKeys: false
-          });
-          setBuildspecYaml(yamlStr);
         }
       }
     } catch (error) {
@@ -545,7 +535,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Region:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.aws.region}
+                    value={pipelineSettings.aws?.region || ''}
                     onChange={(e) => updatePipelineSetting('aws', 'region', e.target.value)}
                   />
                 </div>
@@ -553,7 +543,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Account ID:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.aws.accountId}
+                    value={pipelineSettings.aws?.accountId || ''}
                     onChange={(e) => updatePipelineSetting('aws', 'accountId', e.target.value)}
                   />
                 </div>
@@ -561,7 +551,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>ECR Registry:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.aws.ecrRegistry}
+                    value={pipelineSettings.aws?.ecrRegistry || ''}
                     onChange={(e) => updatePipelineSetting('aws', 'ecrRegistry', e.target.value)}
                   />
                 </div>
@@ -573,7 +563,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Service Role:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codebuild.serviceRole}
+                    value={pipelineSettings.codebuild?.serviceRole || ''}
                     onChange={(e) => updatePipelineSetting('codebuild', 'serviceRole', e.target.value)}
                   />
                 </div>
@@ -581,7 +571,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Environment Type:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codebuild.environmentType}
+                    value={pipelineSettings.codebuild?.environmentType || ''}
                     onChange={(e) => updatePipelineSetting('codebuild', 'environmentType', e.target.value)}
                   />
                 </div>
@@ -589,7 +579,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Environment Image:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codebuild.environmentImage}
+                    value={pipelineSettings.codebuild?.environmentImage || ''}
                     onChange={(e) => updatePipelineSetting('codebuild', 'environmentImage', e.target.value)}
                   />
                 </div>
@@ -597,7 +587,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>VPC ID (optional):</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codebuild.vpcId || ''}
+                    value={pipelineSettings.codebuild?.vpcId || ''}
                     onChange={(e) => updatePipelineSetting('codebuild', 'vpcId', e.target.value || null)}
                     placeholder="vpc-xxxxxxxxx"
                   />
@@ -605,13 +595,13 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                 <div className="form-group">
                   <label>Subnets (optional):</label>
                   <div style={{ marginTop: '10px' }}>
-                    {(pipelineSettings.codebuild.subnets || []).map((subnet, index) => (
+                    {(pipelineSettings.codebuild?.subnets || []).map((subnet, index) => (
                       <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
                         <input
                           type="text"
                           value={subnet}
                           onChange={(e) => {
-                            const newSubnets = [...(pipelineSettings.codebuild.subnets || [])];
+                            const newSubnets = [...(pipelineSettings.codebuild?.subnets || [])];
                             newSubnets[index] = e.target.value;
                             updatePipelineSetting('codebuild', 'subnets', newSubnets.filter(s => s));
                           }}
@@ -621,7 +611,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                         <button
                           type="button"
                           onClick={() => {
-                            const newSubnets = (pipelineSettings.codebuild.subnets || []).filter((_, i) => i !== index);
+                            const newSubnets = (pipelineSettings.codebuild?.subnets || []).filter((_, i) => i !== index);
                             updatePipelineSetting('codebuild', 'subnets', newSubnets.length > 0 ? newSubnets : null);
                           }}
                           style={{ 
@@ -640,7 +630,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                     <button
                       type="button"
                       onClick={() => {
-                        const currentSubnets = pipelineSettings.codebuild.subnets || [];
+                        const currentSubnets = pipelineSettings.codebuild?.subnets || [];
                         updatePipelineSetting('codebuild', 'subnets', [...currentSubnets, '']);
                       }}
                       style={{ 
@@ -661,7 +651,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Security Group (optional):</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codebuild.securityGroup || ''}
+                    value={pipelineSettings.codebuild?.securityGroup || ''}
                     onChange={(e) => updatePipelineSetting('codebuild', 'securityGroup', e.target.value || null)}
                     placeholder="sg-xxxxxxxxx"
                   />
@@ -674,7 +664,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Service Role:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codepipeline.serviceRole}
+                    value={pipelineSettings.codepipeline?.serviceRole || ''}
                     onChange={(e) => updatePipelineSetting('codepipeline', 'serviceRole', e.target.value)}
                   />
                 </div>
@@ -682,7 +672,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>CodeStar Connection Name:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.codepipeline.codestarConnectionName}
+                    value={pipelineSettings.codepipeline?.codestarConnectionName || ''}
                     onChange={(e) => updatePipelineSetting('codepipeline', 'codestarConnectionName', e.target.value)}
                   />
                 </div>
@@ -694,7 +684,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Cluster Name:</label>
                   <input
                     type="text"
-                    value={pipelineSettings.eks.clusterName}
+                    value={pipelineSettings.eks?.clusterName || ''}
                     onChange={(e) => updatePipelineSetting('eks', 'clusterName', e.target.value)}
                   />
                 </div>
@@ -702,7 +692,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   <label>Cluster Role ARN (optional):</label>
                   <input
                     type="text"
-                    value={pipelineSettings.eks.clusterRoleArn || ''}
+                    value={pipelineSettings.eks?.clusterRoleArn || ''}
                     onChange={(e) => updatePipelineSetting('eks', 'clusterRoleArn', e.target.value || null)}
                     placeholder="arn:aws:iam::accountId:role/role-name"
                   />

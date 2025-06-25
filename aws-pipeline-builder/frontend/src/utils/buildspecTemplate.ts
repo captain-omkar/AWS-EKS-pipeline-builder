@@ -41,16 +41,16 @@ import { getApiUrl } from '../config';
  */
 export const getDefaultBuildspec = async (): Promise<BuildspecConfig> => {
   try {
-    // Try to fetch buildspec from settings
-    const response = await fetch(getApiUrl('/api/pipeline-settings'));
-    if (response.ok) {
-      const data = await response.json();
-      if (data.success && data.settings.buildspec && Object.keys(data.settings.buildspec).length > 0) {
-        return data.settings.buildspec;
+    // First, try to fetch the master buildspec template from the file
+    const templateResponse = await fetch(getApiUrl('/api/buildspec-template'));
+    if (templateResponse.ok) {
+      const templateData = await templateResponse.json();
+      if (templateData.success && templateData.buildspec) {
+        return templateData.buildspec;
       }
     }
   } catch (error) {
-    console.error('Failed to fetch buildspec from settings:', error);
+    console.error('Failed to fetch buildspec template:', error);
   }
   
   // Fallback to default buildspec

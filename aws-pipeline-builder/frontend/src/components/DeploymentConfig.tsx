@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import { DeploymentConfig as DeploymentConfigType } from '../types/Pipeline';
 import { generateK8sManifest, getDefaultDeploymentConfig } from '../utils/manifestTemplate';
+import { getApiUrl } from '../config';
+
+interface DeploymentOptions {
+  namespaces: string[];
+  appTypes: string[];
+  products: string[];
+  nodeGroups: string[];
+  serviceAccounts: string[];
+  memoryOptions: string[];
+  cpuOptions: string[];
+  bootstrapServers: string[];
+  targetPortOptions: number[];
+  serviceTypeOptions?: string[];
+}
 
 interface DeploymentConfigProps {
   pipelineName: string;
@@ -23,6 +38,18 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
   const [showPreview, setShowPreview] = useState(false);
   const [generatedManifest, setGeneratedManifest] = useState<string>('');
   const [loadingManifest, setLoadingManifest] = useState(false);
+  const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
+    namespaces: ['default'],
+    appTypes: ['python', 'nodejs', 'java', 'csharp', 'go'],
+    products: ['default'],
+    nodeGroups: ['default-nodegroup'],
+    serviceAccounts: ['default'],
+    memoryOptions: ['128Mi', '256Mi', '512Mi', '1Gi', '2Gi'],
+    cpuOptions: ['100m', '250m', '500m', '1000m', '2000m'],
+    bootstrapServers: [],
+    targetPortOptions: [80, 443, 3000, 5000, 8080, 8443],
+    serviceTypeOptions: ['ClusterIP', 'LoadBalancer', 'NodePort']
+  });
 
   const handleInputChange = (field: keyof DeploymentConfigType, value: string) => {
     setDeploymentConfig({
@@ -30,6 +57,20 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
       [field]: value
     });
   };
+
+  useEffect(() => {
+    const fetchDeploymentOptions = async () => {
+      try {
+        const response = await axios.get(getApiUrl('/api/pipeline-settings'));
+        if (response.data.success && response.data.settings.deploymentOptions) {
+          setDeploymentOptions(response.data.settings.deploymentOptions);
+        }
+      } catch (error) {
+        console.error('Error fetching deployment options:', error);
+      }
+    };
+    fetchDeploymentOptions();
+  }, []);
 
   useEffect(() => {
     const loadManifest = async () => {
@@ -76,7 +117,9 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     value={deploymentConfig.namespace}
                     onChange={(e) => handleInputChange('namespace', e.target.value)}
                   >
-                    <option value="staging-locobuzz">staging-locobuzz</option>
+                    {deploymentOptions.namespaces.map((namespace) => (
+                      <option key={namespace} value={namespace}>{namespace}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -86,8 +129,11 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     value={deploymentConfig.appType}
                     onChange={(e) => handleInputChange('appType', e.target.value)}
                   >
-                    <option value="csharp">C#</option>
-                    <option value="python">Python</option>
+                    {deploymentOptions.appTypes.map((appType) => (
+                      <option key={appType} value={appType}>
+                        {appType === 'csharp' ? 'C#' : appType.charAt(0).toUpperCase() + appType.slice(1)}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -99,19 +145,24 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     value={deploymentConfig.product}
                     onChange={(e) => handleInputChange('product', e.target.value)}
                   >
-                    <option value="cmo">CMO</option>
-                    <option value="modernization">Modernization</option>
-                    <option value="newsverse">Newsverse</option>
+                    {deploymentOptions.products.map((product) => (
+                      <option key={product} value={product}>
+                        {product.charAt(0).toUpperCase() + product.slice(1)}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div className="form-group">
                   <label>Node Group:</label>
-                  <input
-                    type="text"
+                  <select
                     value={deploymentConfig.nodeGroup}
                     onChange={(e) => handleInputChange('nodeGroup', e.target.value)}
-                  />
+                  >
+                    {deploymentOptions.nodeGroups.map((nodeGroup) => (
+                      <option key={nodeGroup} value={nodeGroup}>{nodeGroup}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -123,7 +174,7 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     type="text"
                     value={deploymentConfig.memoryLimit}
                     onChange={(e) => handleInputChange('memoryLimit', e.target.value)}
-                    placeholder="e.g., 300Mi"
+                    placeholder={`e.g., ${deploymentOptions.memoryOptions[2] || '512Mi'}`}
                   />
                 </div>
 
@@ -133,7 +184,7 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     type="text"
                     value={deploymentConfig.cpuLimit}
                     onChange={(e) => handleInputChange('cpuLimit', e.target.value)}
-                    placeholder="e.g., 300m"
+                    placeholder={`e.g., ${deploymentOptions.cpuOptions[2] || '500m'}`}
                   />
                 </div>
               </div>
@@ -146,7 +197,7 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     type="text"
                     value={deploymentConfig.memoryRequest}
                     onChange={(e) => handleInputChange('memoryRequest', e.target.value)}
-                    placeholder="e.g., 150Mi"
+                    placeholder={`e.g., ${deploymentOptions.memoryOptions[1] || '256Mi'}`}
                   />
                 </div>
 
@@ -156,7 +207,7 @@ const DeploymentConfig: React.FC<DeploymentConfigProps> = ({
                     type="text"
                     value={deploymentConfig.cpuRequest}
                     onChange={(e) => handleInputChange('cpuRequest', e.target.value)}
-                    placeholder="e.g., 150m"
+                    placeholder={`e.g., ${deploymentOptions.cpuOptions[1] || '250m'}`}
                   />
                 </div>
               </div>

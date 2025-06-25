@@ -22,6 +22,7 @@ COPY pipeline_settings.json .
 COPY env_suggestions.json .
 COPY pipeline_metadata.json .
 COPY manifest_template.yml .
+COPY buildspec-template.yml .
 
 # Create config directory
 RUN mkdir -p /app/config
