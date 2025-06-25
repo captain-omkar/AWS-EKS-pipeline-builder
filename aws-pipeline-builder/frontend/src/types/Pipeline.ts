@@ -55,6 +55,7 @@ export interface KafkaScalingConfig {
   topicName: string;
   consumerGroup: string;
   bootstrapServers: string;
+  lagThreshold: number;
 }
 
 export type ScalingConfig = HPAConfig | KafkaScalingConfig;

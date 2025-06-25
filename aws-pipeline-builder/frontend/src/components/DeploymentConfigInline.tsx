@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { DeploymentConfig as DeploymentConfigType } from '../types/Pipeline';
-import { generateK8sManifest, getDefaultDeploymentConfig } from '../utils/manifestTemplate';
+import { DeploymentConfig as DeploymentConfigType, ScalingConfig } from '../types/Pipeline';
+import { generateK8sManifest, generateServiceManifest, getDefaultDeploymentConfig } from '../utils/manifestTemplate';
+import { generateScalingManifestFromTemplate } from '../utils/scalingManifestTemplate';
 import { getApiUrl } from '../config';
 
 interface DeploymentOptions {
@@ -22,6 +23,7 @@ interface DeploymentConfigInlineProps {
   onSave: (config: DeploymentConfigType) => void;
   onClose: () => void;
   isEditMode?: boolean;  // New prop to determine if we're editing an existing pipeline
+  scalingConfig?: ScalingConfig;  // Optional scaling config for preview
 }
 
 const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
@@ -30,13 +32,17 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   config,
   onSave,
   onClose,
-  isEditMode = false
+  isEditMode = false,
+  scalingConfig
 }) => {
   const [deploymentConfig, setDeploymentConfig] = useState<DeploymentConfigType>(
     config || getDefaultDeploymentConfig()
   );
   const [showPreview, setShowPreview] = useState(false);
+  const [previewTab, setPreviewTab] = useState<'deployment' | 'service' | 'scaling'>('deployment');
   const [generatedManifest, setGeneratedManifest] = useState<string>('');
+  const [generatedServiceManifest, setGeneratedServiceManifest] = useState<string>('');
+  const [generatedScalingManifest, setGeneratedScalingManifest] = useState<string>('');
   const [loadingManifest, setLoadingManifest] = useState(false);
   const [existingManifest, setExistingManifest] = useState<string | null>(null);
   const [loadingExistingManifest, setLoadingExistingManifest] = useState(false);
@@ -101,21 +107,41 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   }, [isEditMode, pipelineName]);
 
   useEffect(() => {
-    const loadManifest = async () => {
+    const loadAllManifests = async () => {
       setLoadingManifest(true);
       try {
+        // Generate deployment manifest
         const manifest = await generateK8sManifest(pipelineName, ecrUri, deploymentConfig);
         setGeneratedManifest(manifest);
+
+        // Generate service manifest
+        const serviceManifest = await generateServiceManifest(pipelineName, deploymentConfig);
+        setGeneratedServiceManifest(serviceManifest);
+
+        // Generate scaling manifest if scaling config is provided
+        if (scalingConfig) {
+          const scalingManifest = await generateScalingManifestFromTemplate(
+            pipelineName,
+            deploymentConfig.serviceName || pipelineName,
+            deploymentConfig.namespace,
+            scalingConfig
+          );
+          setGeneratedScalingManifest(scalingManifest);
+        } else {
+          setGeneratedScalingManifest('No scaling configuration provided');
+        }
       } catch (error) {
-        console.error('Failed to generate manifest:', error);
-        setGeneratedManifest('Failed to generate manifest');
+        console.error('Failed to generate manifests:', error);
+        setGeneratedManifest('Failed to generate deployment manifest');
+        setGeneratedServiceManifest('Failed to generate service manifest');
+        setGeneratedScalingManifest('Failed to generate scaling manifest');
       } finally {
         setLoadingManifest(false);
       }
     };
 
-    loadManifest();
-  }, [pipelineName, ecrUri, deploymentConfig]);
+    loadAllManifests();
+  }, [pipelineName, ecrUri, deploymentConfig, scalingConfig]);
 
   const handleSave = () => {
     onSave(deploymentConfig);
@@ -126,7 +152,7 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
     <div className="deployment-config-inline">
       <div className="inline-header">
         <h4>Deployment Configuration</h4>
-        <button className="close-inline" onClick={onClose}>&times;</button>
+        <button type="button" className="close-inline" onClick={onClose}>&times;</button>
       </div>
 
       {!showPreview ? (
@@ -378,13 +404,13 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
           </div>
 
           <div className="inline-buttons">
-            <button className="preview-btn-inline" onClick={() => setShowPreview(true)}>
+            <button type="button" className="preview-btn-inline" onClick={() => setShowPreview(true)}>
               Preview
             </button>
-            <button className="save-btn-inline" onClick={handleSave}>
+            <button type="button" className="save-btn-inline" onClick={handleSave}>
               Save
             </button>
-            <button className="cancel-btn-inline" onClick={onClose}>
+            <button type="button" className="cancel-btn-inline" onClick={onClose}>
               Cancel
             </button>
           </div>
@@ -392,35 +418,88 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
       ) : (
         <div className="inline-preview">
           <div className="preview-header">
-            <h5>Manifest Preview - {pipelineName}.yml</h5>
-            <button className="back-btn-inline" onClick={() => setShowPreview(false)}>
+            <h5>Kubernetes Manifests Preview - {pipelineName}</h5>
+            <button type="button" className="back-btn-inline" onClick={() => setShowPreview(false)}>
               Back
             </button>
           </div>
           
-          {isEditMode && manifestExists ? (
-            <div className="manifest-split-view">
-              <div className="manifest-column">
-                <h6>Existing Manifest (from AWS)</h6>
-                <pre className="manifest-preview-split">
-                  {loadingExistingManifest ? 'Loading existing manifest...' : (existingManifest || 'No existing manifest found')}
+          {/* Tabs for different manifest types */}
+          <div className="preview-tabs">
+            <button 
+              type="button"
+              className={`preview-tab ${previewTab === 'deployment' ? 'active' : ''}`}
+              onClick={() => setPreviewTab('deployment')}
+            >
+              Deployment
+            </button>
+            <button 
+              type="button"
+              className={`preview-tab ${previewTab === 'service' ? 'active' : ''}`}
+              onClick={() => setPreviewTab('service')}
+            >
+              Service
+            </button>
+            {scalingConfig && (
+              <button 
+                type="button"
+                className={`preview-tab ${previewTab === 'scaling' ? 'active' : ''}`}
+                onClick={() => setPreviewTab('scaling')}
+              >
+                {scalingConfig.type === 'hpa' ? 'HPA' : 'Kafka Scaling'}
+              </button>
+            )}
+          </div>
+          
+          {/* Tab content */}
+          <div className="preview-content">
+            {previewTab === 'deployment' && (
+              <>
+                <h6>Deployment Manifest ({pipelineName}.yml)</h6>
+                {isEditMode && manifestExists ? (
+                  <div className="manifest-split-view">
+                    <div className="manifest-column">
+                      <div className="manifest-subtitle">Existing (from AWS)</div>
+                      <pre className="manifest-preview-split">
+                        {loadingExistingManifest ? 'Loading existing manifest...' : (existingManifest || 'No existing manifest found')}
+                      </pre>
+                    </div>
+                    <div className="manifest-column">
+                      <div className="manifest-subtitle">Generated (from form)</div>
+                      <pre className="manifest-preview-split">
+                        {loadingManifest ? 'Loading manifest...' : generatedManifest}
+                      </pre>
+                    </div>
+                  </div>
+                ) : (
+                  <pre className="manifest-preview-inline">
+                    {loadingManifest ? 'Loading manifest...' : generatedManifest}
+                  </pre>
+                )}
+              </>
+            )}
+            
+            {previewTab === 'service' && (
+              <>
+                <h6>Service Manifest ({pipelineName}-service.yml)</h6>
+                <pre className="manifest-preview-inline">
+                  {loadingManifest ? 'Loading service manifest...' : generatedServiceManifest}
                 </pre>
-              </div>
-              <div className="manifest-column">
-                <h6>Generated Manifest (from form)</h6>
-                <pre className="manifest-preview-split">
-                  {loadingManifest ? 'Loading manifest...' : generatedManifest}
+              </>
+            )}
+            
+            {previewTab === 'scaling' && scalingConfig && (
+              <>
+                <h6>{scalingConfig.type === 'hpa' ? 'HPA' : 'Kafka Scaling'} Manifest ({pipelineName}-{scalingConfig.type}.yml)</h6>
+                <pre className="manifest-preview-inline">
+                  {loadingManifest ? 'Loading scaling manifest...' : generatedScalingManifest}
                 </pre>
-              </div>
-            </div>
-          ) : (
-            <pre className="manifest-preview-inline">
-              {loadingManifest ? 'Loading manifest...' : generatedManifest}
-            </pre>
-          )}
+              </>
+            )}
+          </div>
           
           <div className="inline-buttons">
-            <button className="save-btn-inline" onClick={handleSave}>
+            <button type="button" className="save-btn-inline" onClick={handleSave}>
               Save & Close
             </button>
           </div>

@@ -1088,6 +1088,7 @@ const PipelineForm: React.FC = () => {
                   onSave={(config) => saveDeploymentConfig(pIndex, config)}
                   onClose={() => setExpandedDeploymentConfig(expandedDeploymentConfig.filter(i => i !== pIndex))}
                   isEditMode={isEditMode}
+                  scalingConfig={pipeline.scalingConfig}
                 />
               )}
 

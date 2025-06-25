@@ -69,6 +69,52 @@ export const generateK8sManifest = async (
 };
 
 
+export const generateServiceManifest = async (
+  pipelineName: string,
+  config: DeploymentConfig
+): Promise<string> => {
+  try {
+    // Fetch the service template from backend
+    const response = await axios.get(getApiUrl('/api/service-template'));
+    if (response.data.success && response.data.template) {
+      // Replace template variables with actual values
+      let manifest = response.data.template;
+      
+      // Replace all template variables
+      manifest = manifest.replace(/\{\{\s*pipeline_name\s*\}\}/g, config.serviceName || pipelineName);
+      manifest = manifest.replace(/\{\{\s*namespace\s*\}\}/g, config.namespace);
+      manifest = manifest.replace(/\{\{\s*app_type\s*\}\}/g, config.appType);
+      manifest = manifest.replace(/\{\{\s*product\s*\}\}/g, config.product);
+      manifest = manifest.replace(/\{\{\s*service_port\s*\}\}/g, String(config.targetPort || 80));
+      manifest = manifest.replace(/\{\{\s*target_port\s*\}\}/g, String(config.targetPort || 80));
+      manifest = manifest.replace(/\{\{\s*service_type\s*\}\}/g, config.serviceType || 'ClusterIP');
+      
+      return manifest;
+    }
+  } catch (error) {
+    console.error('Failed to generate service manifest:', error);
+  }
+  
+  // Fallback to default service manifest
+  return `apiVersion: v1
+kind: Service
+metadata:
+  name: ${config.serviceName || pipelineName}-service
+  namespace: ${config.namespace}
+  labels:
+    app.type: "${config.appType}"
+    product: "${config.product}"
+spec:
+  selector:
+    app.kubernetes.io/name: ${config.serviceName || pipelineName}
+  ports:
+  - name: http
+    port: ${config.targetPort || 80}
+    targetPort: ${config.targetPort || 80}
+    protocol: TCP
+  type: ${config.serviceType || 'ClusterIP'}`;
+};
+
 export const getDefaultDeploymentConfig = (): DeploymentConfig => ({
   namespace: 'staging-locobuzz',
   serviceName: '',

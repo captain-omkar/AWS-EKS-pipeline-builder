@@ -1822,3 +1822,132 @@ button[type="button"]:hover {
   margin: 0;
   border: 1px solid #ddd;
 }
+
+/* Preview Tabs Styles */
+.preview-tabs {
+  display: flex;
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+  margin-bottom: 20px;
+  border-radius: 4px 4px 0 0;
+}
+
+.preview-tab {
+  background: none;
+  border: none;
+  padding: 12px 24px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6c757d;
+  transition: all 0.3s ease;
+  border-bottom: 3px solid transparent;
+  outline: none;
+}
+
+.preview-tab:hover {
+  background-color: #e9ecef;
+  color: #495057;
+}
+
+.preview-tab.active {
+  background-color: #fff;
+  color: #1976d2;
+  border-bottom-color: #1976d2;
+  font-weight: 600;
+}
+
+.preview-content {
+  background: white;
+  border-radius: 0 0 4px 4px;
+}
+
+.preview-content h6 {
+  margin: 0 0 15px 0;
+  color: #1976d2;
+  font-size: 16px;
+  font-weight: 600;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.manifest-subtitle {
+  margin: 0 0 10px 0;
+  color: #495057;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px;
+  background-color: #f0f0f0;
+  border-radius: 4px 4px 0 0;
+}
+
+/* Scaling Preview Styles */
+.scaling-preview {
+  padding: 20px;
+}
+
+.scaling-preview .preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.scaling-preview h3 {
+  margin: 0;
+  color: #1976d2;
+}
+
+.scaling-preview .back-button {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.3s;
+}
+
+.scaling-preview .back-button:hover {
+  background-color: #5a6268;
+}
+
+.scaling-preview .manifest-preview {
+  background-color: #f5f5f5;
+  padding: 20px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  max-height: 400px;
+  overflow-y: auto;
+  margin: 0 0 20px 0;
+  border: 1px solid #dee2e6;
+}
+
+.preview-button {
+  background-color: #42a5f5;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.3s;
+  margin-right: 10px;
+}
+
+.preview-button:hover:not(:disabled) {
+  background-color: #2196f3;
+}
+
+.preview-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}

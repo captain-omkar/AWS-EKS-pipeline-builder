@@ -4,8 +4,10 @@ import boto3
 import json
 import os
 from datetime import datetime
+from collections import OrderedDict
 from dynamodb_storage import DynamoDBStorage
 from lock_manager import lock_manager
+from decimal import Decimal
 
 # Initialize Flask application with CORS support for cross-origin requests
 app = Flask(__name__)
@@ -64,6 +66,24 @@ CORS(app, origins=cors_origins)
 # Initialize DynamoDB storage
 dynamodb_config = app_settings.get('dynamodb', {})
 storage = DynamoDBStorage(dynamodb_config, session)
+
+# Helper function to convert Decimal to JSON serializable types
+def decimal_converter(obj):
+    """Convert Decimal objects to JSON serializable types"""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+def convert_decimals(obj):
+    """Recursively convert Decimal objects in nested structures"""
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals(item) for item in obj]
+    else:
+        return obj
 
 def upload_file_to_codecommit(repo_name, file_path, content, commit_message):
     """
@@ -152,21 +172,29 @@ def upload_appsettings_to_codecommit(repo_name, pipeline_name, content):
 # Load manifest template function - moved here to be available for generate_k8s_manifest
 def load_manifest_template():
     """
-    Load the manifest template from file.
-    First tries to load custom template, falls back to default if not found.
+    Load the manifest template from DynamoDB first, then fall back to file.
+    Priority: DynamoDB -> custom file -> default file -> hardcoded template
     """
-    # These paths will be defined later in the file
-    MANIFEST_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'deployment.yml')
-    CUSTOM_MANIFEST_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'manifest_template.yml')
-    
     try:
-        # Try to load custom template first
+        # First try to load from DynamoDB (Settings modal template)
+        template = storage.get_template('manifest')
+        if template is not None:
+            print("✅ Loaded manifest template from DynamoDB")
+            return template
+        
+        # Fall back to file-based templates
+        MANIFEST_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'deployment.yml')
+        CUSTOM_MANIFEST_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'manifest_template.yml')
+        
+        # Try to load custom template file
         if os.path.exists(CUSTOM_MANIFEST_TEMPLATE_PATH):
             with open(CUSTOM_MANIFEST_TEMPLATE_PATH, 'r') as f:
+                print("✅ Loaded manifest template from custom file")
                 return f.read()
-        # Fall back to default template
+        # Fall back to default template file
         elif os.path.exists(MANIFEST_TEMPLATE_PATH):
             with open(MANIFEST_TEMPLATE_PATH, 'r') as f:
+                print("✅ Loaded manifest template from default file")
                 return f.read()
         else:
             # Return a basic default template if no file exists
@@ -236,6 +264,55 @@ spec:
 """
     except Exception as e:
         print(f"Error loading manifest template: {str(e)}")
+        return ""
+
+def load_buildspec_template():
+    """
+    Load the buildspec template from DynamoDB first, then fall back to file.
+    Priority: DynamoDB -> file -> hardcoded template
+    """
+    try:
+        # First try to load from DynamoDB (Settings modal template)
+        buildspec_yaml = storage.get_template('buildspec')
+        if buildspec_yaml is not None:
+            print("✅ Loaded buildspec template from DynamoDB")
+            return buildspec_yaml
+        
+        # Fall back to file-based template
+        try:
+            with open('buildspec-template.yml', 'r') as f:
+                print("✅ Loaded buildspec template from file")
+                return f.read()
+        except FileNotFoundError:
+            # Return hardcoded default buildspec if no file exists
+            print("✅ Using hardcoded default buildspec template")
+            return """version: 0.2
+phases:
+  install:
+    commands:
+      - yum install -y jq unzip
+      - curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl
+      - mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 465105616690.dkr.ecr.ap-south-1.amazonaws.com
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG"""
+            
+    except Exception as e:
+        print(f"Error loading buildspec template: {e}")
         return ""
 
 def generate_k8s_manifest(pipeline_name, ecr_uri, deployment_config):
@@ -716,10 +793,9 @@ def create_pipelines():
                 if use_buildspec_file:
                     buildspec = buildspec_path
                 else:
-                    # Always load from the buildspec template file for consistency
+                    # Load buildspec template from DynamoDB first, then fallback to file
                     # This ensures we use the master template from Settings modal
-                    with open('buildspec-template.yml', 'r') as f:
-                        buildspec = f.read()
+                    buildspec = load_buildspec_template()
                 
                 # Create CodeBuild project
                 codebuild_project_name = f"{pipeline_name}-build"
@@ -1561,6 +1637,9 @@ def load_pipeline_metadata():
     try:
         pipelines = storage.list_pipelines()
         
+        # Convert any Decimal types to regular numbers
+        pipelines = convert_decimals(pipelines)
+        
         # Add performance metrics
         if len(pipelines) > 100:
             print(f"Performance note: Loading {len(pipelines)} pipelines.")
@@ -1610,6 +1689,9 @@ def get_pipeline_by_name(pipeline_name):
         pipeline = storage.get_pipeline(pipeline_name)
         
         if pipeline:
+            # Convert any Decimal types to regular numbers
+            pipeline = convert_decimals(pipeline)
+            
             # Add read-only flags for existing pipelines
             pipeline['readOnlyFields'] = {
                 'buildspec': True,
@@ -2316,12 +2398,75 @@ def get_pipeline_manifest(pipeline_name):
 
 @app.route('/api/buildspec-template', methods=['GET'])
 def get_buildspec_template():
-    """Get the buildspec template from file"""
+    """Get the buildspec template from DynamoDB (for Settings modal)"""
     try:
-        # Read the master buildspec template from file in app directory
-        with open('buildspec-template.yml', 'r') as f:
+        # Try to get template from DynamoDB first
+        buildspec_yaml = storage.get_template('buildspec')
+        
+        if buildspec_yaml is not None:
+            # Parse YAML content from DynamoDB
             import yaml
-            buildspec = yaml.safe_load(f)
+            buildspec = yaml.safe_load(buildspec_yaml)
+            
+            # Ensure phases are in correct order
+            if isinstance(buildspec, dict) and 'phases' in buildspec:
+                ordered_phases = OrderedDict()
+                phase_order = ['install', 'pre_build', 'build', 'post_build']
+                for phase in phase_order:
+                    if phase in buildspec['phases']:
+                        ordered_phases[phase] = buildspec['phases'][phase]
+                buildspec['phases'] = ordered_phases
+        else:
+            # Fall back to file-based template
+            try:
+                with open('buildspec-template.yml', 'r') as f:
+                    import yaml
+                    buildspec = yaml.safe_load(f)
+                    
+                    # Ensure phases are in correct order
+                    if isinstance(buildspec, dict) and 'phases' in buildspec:
+                        ordered_phases = OrderedDict()
+                        phase_order = ['install', 'pre_build', 'build', 'post_build']
+                        for phase in phase_order:
+                            if phase in buildspec['phases']:
+                                ordered_phases[phase] = buildspec['phases'][phase]
+                        buildspec['phases'] = ordered_phases
+            except FileNotFoundError:
+                # Use hardcoded default buildspec if no file exists
+                buildspec = {
+                    'version': 0.2,
+                    'phases': OrderedDict([
+                        ('install', {
+                            'commands': [
+                                'yum install -y jq unzip',
+                                'curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl',
+                                'chmod +x ./kubectl',
+                                'mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin'
+                            ]
+                        }),
+                        ('pre_build', {
+                            'commands': [
+                                'echo Logging in to Amazon ECR...',
+                                'aws --version'
+                            ]
+                        }),
+                        ('build', {
+                            'commands': [
+                                'echo Build started on `date`',
+                                'echo Building the Docker image...',
+                                'docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .',
+                                'docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG'
+                            ]
+                        }),
+                        ('post_build', {
+                            'commands': [
+                                'echo Build completed on `date`',
+                                'echo Pushing the Docker image...',
+                                'docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG'
+                            ]
+                        })
+                    ])
+                }
             
         return jsonify({
             'success': True,
@@ -2335,17 +2480,105 @@ def get_buildspec_template():
 
 @app.route('/api/buildspec-template', methods=['POST'])
 def update_buildspec_template():
-    """Update the buildspec template file"""
+    """Update the buildspec template in DynamoDB (from Settings modal)"""
     try:
         data = request.json
         buildspec = data.get('buildspec', {})
         
-        # For now, we'll just return success without actually saving to a file
-        # The buildspec template remains in the code as default
+        if not buildspec:
+            return jsonify({
+                'success': False,
+                'error': 'Buildspec content is required'
+            }), 400
+        
+        # Convert buildspec dict to YAML string for storage
+        import yaml
+        
+        # Create a regular dict to ensure proper YAML serialization
+        clean_buildspec = {}
+        
+        # Copy version if present
+        if 'version' in buildspec:
+            clean_buildspec['version'] = buildspec['version']
+        
+        # Ensure phases are in correct order using a regular dict
+        if 'phases' in buildspec and isinstance(buildspec['phases'], dict):
+            clean_buildspec['phases'] = {}
+            phase_order = ['install', 'pre_build', 'build', 'post_build']
+            for phase in phase_order:
+                if phase in buildspec['phases']:
+                    clean_buildspec['phases'][phase] = buildspec['phases'][phase]
+        
+        # Use safe dumper to avoid Python-specific tags
+        buildspec_yaml = yaml.dump(clean_buildspec, 
+                                 default_flow_style=False, 
+                                 sort_keys=False,
+                                 Dumper=yaml.SafeDumper)
+        
+        # Save to DynamoDB
+        if storage.save_template('buildspec', buildspec_yaml):
+            return jsonify({
+                'success': True,
+                'message': 'Buildspec template updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save buildspec template to DynamoDB'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/manifest-template', methods=['GET'])
+def get_manifest_template_settings():
+    """Get the manifest template from DynamoDB (for Settings modal)"""
+    try:
+        # Try to get template from DynamoDB first
+        template = storage.get_template('manifest')
+        
+        if template is None:
+            # Fall back to load_manifest_template() if not in DynamoDB
+            template = load_manifest_template()
+        
         return jsonify({
             'success': True,
-            'message': 'Buildspec template updated successfully'
+            'template': template
         })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load manifest template: {str(e)}'
+        }), 500
+
+@app.route('/api/manifest-template', methods=['POST'])
+def update_manifest_template_settings():
+    """Update the manifest template in DynamoDB (from Settings modal)"""
+    try:
+        data = request.json
+        template = data.get('template', '')
+        
+        if not template:
+            return jsonify({
+                'success': False,
+                'error': 'Template content is required'
+            }), 400
+        
+        # Save to DynamoDB
+        if storage.save_template('manifest', template):
+            return jsonify({
+                'success': True,
+                'message': 'Manifest template updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save manifest template to DynamoDB'
+            }), 500
+            
     except Exception as e:
         return jsonify({
             'success': False,
@@ -2354,7 +2587,7 @@ def update_buildspec_template():
 
 @app.route('/api/manifest-template-editor', methods=['GET'])
 def get_manifest_template_editor():
-    """Get the manifest template for editing"""
+    """Get the manifest template for editing (legacy file-based endpoint)"""
     try:
         with open('manifest_template.yml', 'r') as f:
             template = f.read()
@@ -2383,6 +2616,226 @@ def update_manifest_template_editor():
             'success': True,
             'message': 'Manifest template updated successfully'
         })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# Service Template Endpoints
+@app.route('/api/service-template', methods=['GET'])
+def get_service_template():
+    """Get the service template from DynamoDB (for Settings modal)"""
+    try:
+        # Try to get template from DynamoDB first
+        template = storage.get_template('service')
+        
+        if template is None:
+            # Fall back to default service template
+            template = """apiVersion: v1
+kind: Service
+metadata:
+  name: {{ pipeline_name }}-service
+  namespace: {{ namespace }}
+  labels:
+    app.type: "{{ app_type }}"
+    product: "{{ product }}"
+spec:
+  selector:
+    app.kubernetes.io/name: {{ pipeline_name }}
+  ports:
+  - name: http
+    port: {{ service_port }}
+    targetPort: {{ target_port }}
+    protocol: TCP
+  type: {{ service_type }}
+"""
+        
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load service template: {str(e)}'
+        }), 500
+
+@app.route('/api/service-template', methods=['POST'])
+def update_service_template():
+    """Update the service template in DynamoDB (from Settings modal)"""
+    try:
+        data = request.json
+        template = data.get('template', '')
+        
+        if not template:
+            return jsonify({
+                'success': False,
+                'error': 'Template content is required'
+            }), 400
+        
+        # Save to DynamoDB
+        if storage.save_template('service', template):
+            return jsonify({
+                'success': True,
+                'message': 'Service template updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save service template to DynamoDB'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# HPA Template Endpoints
+@app.route('/api/hpa-template', methods=['GET'])
+def get_hpa_template():
+    """Get the HPA template from DynamoDB (for Settings modal)"""
+    try:
+        # Try to get template from DynamoDB first
+        template = storage.get_template('hpa')
+        
+        if template is None:
+            # Fall back to default HPA template
+            template = """apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ pipeline_name }}-hpa
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ pipeline_name }}
+  minReplicas: {{ min_pods }}
+  maxReplicas: {{ max_pods }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ cpu_threshold }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ memory_threshold }}
+"""
+        
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load HPA template: {str(e)}'
+        }), 500
+
+@app.route('/api/hpa-template', methods=['POST'])
+def update_hpa_template():
+    """Update the HPA template in DynamoDB (from Settings modal)"""
+    try:
+        data = request.json
+        template = data.get('template', '')
+        
+        if not template:
+            return jsonify({
+                'success': False,
+                'error': 'Template content is required'
+            }), 400
+        
+        # Save to DynamoDB
+        if storage.save_template('hpa', template):
+            return jsonify({
+                'success': True,
+                'message': 'HPA template updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save HPA template to DynamoDB'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# Kafka Template Endpoints
+@app.route('/api/kafka-template', methods=['GET'])
+def get_kafka_template():
+    """Get the Kafka template from DynamoDB (for Settings modal)"""
+    try:
+        # Try to get template from DynamoDB first
+        template = storage.get_template('kafka')
+        
+        if template is None:
+            # Fall back to default Kafka template
+            template = """apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ pipeline_name }}-kafka
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    name: {{ pipeline_name }}
+  minReplicaCount: {{ min_pods }}
+  maxReplicaCount: {{ max_pods }}
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: {{ bootstrap_servers }}
+      consumerGroup: {{ consumer_group }}
+      topic: {{ topic_name }}
+      lagThreshold: "10"
+      offsetResetPolicy: latest
+"""
+        
+        return jsonify({
+            'success': True,
+            'template': template
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to load Kafka template: {str(e)}'
+        }), 500
+
+@app.route('/api/kafka-template', methods=['POST'])
+def update_kafka_template():
+    """Update the Kafka template in DynamoDB (from Settings modal)"""
+    try:
+        data = request.json
+        template = data.get('template', '')
+        
+        if not template:
+            return jsonify({
+                'success': False,
+                'error': 'Template content is required'
+            }), 400
+        
+        # Save to DynamoDB
+        if storage.save_template('kafka', template):
+            return jsonify({
+                'success': True,
+                'message': 'Kafka template updated successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save Kafka template to DynamoDB'
+            }), 500
+            
     except Exception as e:
         return jsonify({
             'success': False,

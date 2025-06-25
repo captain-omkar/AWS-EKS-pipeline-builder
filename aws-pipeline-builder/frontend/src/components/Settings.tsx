@@ -17,7 +17,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import * as yaml from 'js-yaml';
-import ManifestTemplateEditor from './ManifestTemplateEditor';
 import { getApiUrl } from '../config';
 
 /**
@@ -154,8 +153,7 @@ const getDefaultBuildspecTemplate = () => {
 
 const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   // State for active tab
-  const [activeTab, setActiveTab] = useState<'env' | 'pipeline' | 'buildspec' | 'manifest' | 'deployment'>('env');
-  const [showManifestEditor, setShowManifestEditor] = useState(false);
+  const [activeTab, setActiveTab] = useState<'env' | 'pipeline' | 'buildspec' | 'manifest' | 'service' | 'hpa' | 'kafka' | 'deployment'>('env');
   
   // State for environment suggestions
   const [suggestions, setSuggestions] = useState<EnvSuggestions>({
@@ -201,6 +199,18 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   // State for buildspec YAML
   const [buildspecYaml, setBuildspecYaml] = useState<string>('');
   
+  // State for manifest template YAML
+  const [manifestYaml, setManifestYaml] = useState<string>('');
+  
+  // State for service template YAML
+  const [serviceYaml, setServiceYaml] = useState<string>('');
+  
+  // State for HPA template YAML
+  const [hpaYaml, setHpaYaml] = useState<string>('');
+  
+  // State for Kafka template YAML
+  const [kafkaYaml, setKafkaYaml] = useState<string>('');
+  
   // State for deployment options
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
     namespaces: ['staging-locobuzz', 'production-locobuzz'],
@@ -219,9 +229,23 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
 
   useEffect(() => {
     if (isOpen) {
-      fetchSuggestions();
-      fetchPipelineSettings();
-      fetchBuildspecTemplate();
+      // Load all data when modal opens
+      const loadAllData = async () => {
+        // Load these in parallel as they don't depend on each other
+        await Promise.all([
+          fetchSuggestions(),
+          fetchPipelineSettings(),
+          fetchManifestTemplate(),
+          fetchServiceTemplate(),
+          fetchHpaTemplate(),
+          fetchKafkaTemplate()
+        ]);
+        
+        // Load buildspec template after pipeline settings to ensure it's not overwritten
+        await fetchBuildspecTemplate();
+      };
+      
+      loadAllData();
     }
   }, [isOpen]);
   
@@ -265,7 +289,8 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
           indent: 2,
           lineWidth: -1,
           noRefs: true,
-          sortKeys: false
+          sortKeys: false,
+          noCompatMode: true
         });
         setBuildspecYaml(yamlStr);
         
@@ -274,6 +299,50 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
       }
     } catch (error) {
       console.error('Error fetching buildspec template:', error);
+    }
+  };
+
+  const fetchManifestTemplate = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/manifest-template'));
+      if (response.data.success && response.data.template) {
+        setManifestYaml(response.data.template);
+      }
+    } catch (error) {
+      console.error('Error fetching manifest template:', error);
+    }
+  };
+
+  const fetchServiceTemplate = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/service-template'));
+      if (response.data.success && response.data.template) {
+        setServiceYaml(response.data.template);
+      }
+    } catch (error) {
+      console.error('Error fetching service template:', error);
+    }
+  };
+
+  const fetchHpaTemplate = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/hpa-template'));
+      if (response.data.success && response.data.template) {
+        setHpaYaml(response.data.template);
+      }
+    } catch (error) {
+      console.error('Error fetching HPA template:', error);
+    }
+  };
+
+  const fetchKafkaTemplate = async () => {
+    try {
+      const response = await axios.get(getApiUrl('/api/kafka-template'));
+      if (response.data.success && response.data.template) {
+        setKafkaYaml(response.data.template);
+      }
+    } catch (error) {
+      console.error('Error fetching Kafka template:', error);
     }
   };
 
@@ -316,7 +385,7 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
             clusterName: '',
             clusterRoleArn: null
           },
-          buildspec: {} // Buildspec will be loaded separately from template
+          buildspec: settingsWithoutDeployment.buildspec || {} // Preserve existing buildspec if available
         });
         
         // Update deployment options separately if they exist
@@ -380,22 +449,129 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
     try {
       setLoading(true);
       
-      // Parse buildspec YAML if it was edited
-      let updatedSettings = { ...pipelineSettings };
+      // Save buildspec template to DynamoDB if it was edited
       if (activeTab === 'buildspec' && buildspecYaml) {
         try {
-          updatedSettings.buildspec = yaml.load(buildspecYaml) as any;
+          // Parse and validate the buildspec YAML
+          const buildspecObj = yaml.load(buildspecYaml) as any;
+          
+          // Ensure phases are in correct order when saving
+          if (buildspecObj.phases) {
+            const orderedPhases: any = {};
+            const phaseOrder = ['install', 'pre_build', 'build', 'post_build'];
+            phaseOrder.forEach(phase => {
+              if (buildspecObj.phases[phase]) {
+                orderedPhases[phase] = buildspecObj.phases[phase];
+              }
+            });
+            buildspecObj.phases = orderedPhases;
+          }
+          
+          // Save buildspec template to DynamoDB
+          const buildspecResponse = await axios.post(getApiUrl('/api/buildspec-template'), {
+            buildspec: buildspecObj
+          });
+          
+          if (!buildspecResponse.data.success) {
+            alert('Failed to save buildspec template');
+            return;
+          }
+          
           // Update the local state so the change is reflected immediately
-          setPipelineSettings(updatedSettings);
+          setPipelineSettings(prev => ({ ...prev, buildspec: buildspecObj }));
         } catch (e: any) {
           alert(`Invalid YAML format for buildspec: ${e.message}`);
           return;
         }
       }
       
+      // Save manifest template to DynamoDB if it was edited
+      if (activeTab === 'manifest' && manifestYaml) {
+        try {
+          // Note: We don't validate manifest template as YAML because it contains 
+          // template placeholders like {{ variable }} which are not valid YAML
+          
+          // Save manifest template to DynamoDB
+          const manifestResponse = await axios.post(getApiUrl('/api/manifest-template'), {
+            template: manifestYaml
+          });
+          
+          if (!manifestResponse.data.success) {
+            alert('Failed to save manifest template');
+            return;
+          }
+        } catch (e: any) {
+          alert(`Failed to save manifest template: ${e.message}`);
+          return;
+        }
+      }
+      
+      // Save service template to DynamoDB if it was edited
+      if (activeTab === 'service' && serviceYaml) {
+        try {
+          // Note: We don't validate service template as YAML because it contains 
+          // template placeholders like {{ variable }} which are not valid YAML
+          
+          // Save service template to DynamoDB
+          const serviceResponse = await axios.post(getApiUrl('/api/service-template'), {
+            template: serviceYaml
+          });
+          
+          if (!serviceResponse.data.success) {
+            alert('Failed to save service template');
+            return;
+          }
+        } catch (e: any) {
+          alert(`Failed to save service template: ${e.message}`);
+          return;
+        }
+      }
+      
+      // Save HPA template to DynamoDB if it was edited
+      if (activeTab === 'hpa' && hpaYaml) {
+        try {
+          // Note: We don't validate HPA template as YAML because it contains 
+          // template placeholders like {{ variable }} which are not valid YAML
+          
+          // Save HPA template to DynamoDB
+          const hpaResponse = await axios.post(getApiUrl('/api/hpa-template'), {
+            template: hpaYaml
+          });
+          
+          if (!hpaResponse.data.success) {
+            alert('Failed to save HPA template');
+            return;
+          }
+        } catch (e: any) {
+          alert(`Failed to save HPA template: ${e.message}`);
+          return;
+        }
+      }
+      
+      // Save Kafka template to DynamoDB if it was edited
+      if (activeTab === 'kafka' && kafkaYaml) {
+        try {
+          // Note: We don't validate Kafka template as YAML because it contains 
+          // template placeholders like {{ variable }} which are not valid YAML
+          
+          // Save Kafka template to DynamoDB
+          const kafkaResponse = await axios.post(getApiUrl('/api/kafka-template'), {
+            template: kafkaYaml
+          });
+          
+          if (!kafkaResponse.data.success) {
+            alert('Failed to save Kafka template');
+            return;
+          }
+        } catch (e: any) {
+          alert(`Failed to save Kafka template: ${e.message}`);
+          return;
+        }
+      }
+      
       // Include deployment options in the settings
       const settingsToSave = {
-        ...updatedSettings,
+        ...pipelineSettings,
         deploymentOptions: deploymentOptions
       };
       
@@ -461,6 +637,24 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
             onClick={() => setActiveTab('manifest')}
           >
             Manifest Template
+          </button>
+          <button 
+            className={`tab ${activeTab === 'service' ? 'active' : ''}`}
+            onClick={() => setActiveTab('service')}
+          >
+            Service Template
+          </button>
+          <button 
+            className={`tab ${activeTab === 'hpa' ? 'active' : ''}`}
+            onClick={() => setActiveTab('hpa')}
+          >
+            HPA Template
+          </button>
+          <button 
+            className={`tab ${activeTab === 'kafka' ? 'active' : ''}`}
+            onClick={() => setActiveTab('kafka')}
+          >
+            Kafka Template
           </button>
           <button 
             className={`tab ${activeTab === 'deployment' ? 'active' : ''}`}
@@ -759,33 +953,223 @@ phases:
           )}
           
           {activeTab === 'manifest' && (
-            <div className="manifest-settings">
+            <div className="manifest-editor">
               <h3>Kubernetes Manifest Template</h3>
               <p className="help-text">
-                The manifest template is used to generate Kubernetes deployment configurations for your pipelines.
-                You can edit the master template that will be used for all deployments.
+                Edit the master Kubernetes manifest template that will be used when creating deployments for all pipelines.
+                This template supports variable substitution for dynamic values.
               </p>
+              <textarea
+                value={manifestYaml}
+                onChange={(e) => setManifestYaml(e.target.value)}
+                placeholder="Enter Kubernetes manifest template...
+
+Example:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ pipeline_name }}
+  namespace: {{ namespace }}
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: {{ pipeline_name }}
+  template:
+    metadata:
+      labels:
+        app: {{ pipeline_name }}
+    spec:
+      containers:
+      - name: {{ pipeline_name }}
+        image: {{ image }}
+        resources:
+          limits:
+            memory: {{ memory_limit }}
+            cpu: {{ cpu_limit }}
+          requests:
+            memory: {{ memory_request }}
+            cpu: {{ cpu_request }}"
+                rows={25}
+                style={{ 
+                  width: '100%', 
+                  fontFamily: 'Monaco, Menlo, Ubuntu Mono, Consolas, source-code-pro, monospace',
+                  fontSize: '13px',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: '#f8f9fa',
+                  lineHeight: '1.5'
+                }}
+              />
               <button 
-                onClick={() => setShowManifestEditor(true)}
-                className="edit-manifest-btn"
+                onClick={savePipelineSettings} 
+                disabled={loading}
+                className="save-btn"
               >
-                Edit Manifest Template
+                Save Manifest Template
               </button>
-              <div className="manifest-info">
-                <h4>Available Template Variables:</h4>
-                <ul>
-                  <li><code>{`{{ pipeline_name }}`}</code> - Name of the pipeline/service</li>
-                  <li><code>{`{{ namespace }}`}</code> - Kubernetes namespace</li>
-                  <li><code>{`{{ app_type }}`}</code> - Application type (csharp, python)</li>
-                  <li><code>{`{{ product }}`}</code> - Product name (cmo, modernization, newsverse)</li>
-                  <li><code>{`{{ image }}`}</code> - Docker image URL</li>
-                  <li><code>{`{{ memory_limit }}`}</code> - Memory limit (e.g., 300Mi)</li>
-                  <li><code>{`{{ cpu_limit }}`}</code> - CPU limit (e.g., 300m)</li>
-                  <li><code>{`{{ memory_request }}`}</code> - Memory request (e.g., 150Mi)</li>
-                  <li><code>{`{{ cpu_request }}`}</code> - CPU request (e.g., 150m)</li>
-                  <li><code>{`{{ node_group }}`}</code> - Node group for affinity/tolerations</li>
-                </ul>
-              </div>
+            </div>
+          )}
+          
+          {activeTab === 'service' && (
+            <div className="service-editor">
+              <h3>Kubernetes Service Template</h3>
+              <p className="help-text">
+                Edit the master Kubernetes Service template that will be used when creating services for all pipelines.
+                This template supports variable substitution for dynamic values.
+              </p>
+              <textarea
+                value={serviceYaml}
+                onChange={(e) => setServiceYaml(e.target.value)}
+                placeholder={`Enter Kubernetes Service template...
+
+Example:
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ pipeline_name }}
+  namespace: {{ namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ pipeline_name }}
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: {{ target_port }}
+  type: {{ service_type }}`}
+                rows={25}
+                style={{ 
+                  width: '100%', 
+                  fontFamily: 'Monaco, Menlo, Ubuntu Mono, Consolas, source-code-pro, monospace',
+                  fontSize: '13px',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: '#f8f9fa',
+                  lineHeight: '1.5'
+                }}
+              />
+              <button 
+                onClick={savePipelineSettings} 
+                disabled={loading}
+                className="save-btn"
+              >
+                Save Service Template
+              </button>
+            </div>
+          )}
+          
+          {activeTab === 'hpa' && (
+            <div className="hpa-editor">
+              <h3>HPA (Horizontal Pod Autoscaler) Template</h3>
+              <p className="help-text">
+                Edit the master HPA template that will be used when creating HPA scaling for all pipelines.
+                This template supports variable substitution for dynamic values.
+              </p>
+              <textarea
+                value={hpaYaml}
+                onChange={(e) => setHpaYaml(e.target.value)}
+                placeholder={`Enter HPA template...
+
+Example:
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ pipeline_name }}-hpa
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ pipeline_name }}
+  minReplicas: {{ min_pods }}
+  maxReplicas: {{ max_pods }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ cpu_threshold }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ memory_threshold }}`}
+                rows={25}
+                style={{ 
+                  width: '100%', 
+                  fontFamily: 'Monaco, Menlo, Ubuntu Mono, Consolas, source-code-pro, monospace',
+                  fontSize: '13px',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: '#f8f9fa',
+                  lineHeight: '1.5'
+                }}
+              />
+              <button 
+                onClick={savePipelineSettings} 
+                disabled={loading}
+                className="save-btn"
+              >
+                Save HPA Template
+              </button>
+            </div>
+          )}
+          
+          {activeTab === 'kafka' && (
+            <div className="kafka-editor">
+              <h3>Kafka KEDA ScaledObject Template</h3>
+              <p className="help-text">
+                Edit the master Kafka KEDA ScaledObject template that will be used when creating Kafka-based scaling for all pipelines.
+                This template supports variable substitution for dynamic values.
+              </p>
+              <textarea
+                value={kafkaYaml}
+                onChange={(e) => setKafkaYaml(e.target.value)}
+                placeholder={`Enter Kafka KEDA template...
+
+Example:
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ pipeline_name }}-kafka
+  namespace: {{ namespace }}
+spec:
+  scaleTargetRef:
+    name: {{ pipeline_name }}
+  minReplicaCount: {{ min_pods }}
+  maxReplicaCount: {{ max_pods }}
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: {{ bootstrap_servers }}
+      consumerGroup: {{ consumer_group }}
+      topic: {{ topic_name }}
+      lagThreshold: "10"
+      offsetResetPolicy: latest`}
+                rows={25}
+                style={{ 
+                  width: '100%', 
+                  fontFamily: 'Monaco, Menlo, Ubuntu Mono, Consolas, source-code-pro, monospace',
+                  fontSize: '13px',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  backgroundColor: '#f8f9fa',
+                  lineHeight: '1.5'
+                }}
+              />
+              <button 
+                onClick={savePipelineSettings} 
+                disabled={loading}
+                className="save-btn"
+              >
+                Save Kafka Template
+              </button>
             </div>
           )}
           
@@ -1291,9 +1675,6 @@ phases:
         </div>
       </div>
       
-      {showManifestEditor && (
-        <ManifestTemplateEditor onClose={() => setShowManifestEditor(false)} />
-      )}
     </div>
   );
 };

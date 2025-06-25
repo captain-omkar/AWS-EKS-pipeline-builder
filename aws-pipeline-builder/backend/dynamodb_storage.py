@@ -221,3 +221,62 @@ class DynamoDBStorage:
         except Exception as e:
             print(f"❌ Error saving settings: {str(e)}")
             return False
+    
+    def get_template(self, template_type: str) -> Optional[str]:
+        """
+        Get template from DynamoDB
+        
+        Args:
+            template_type: Type of template ('buildspec' or 'manifest')
+            
+        Returns:
+            Template content as string or None if not found
+        """
+        try:
+            # Use special key format for templates
+            template_key = f"_TEMPLATE_{template_type}"
+            
+            response = self.table.get_item(
+                Key={'pipeline_name': template_key}
+            )
+            
+            if 'Item' in response:
+                # Return the template content
+                item = response['Item']
+                return item.get('template_content', None)
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error getting {template_type} template: {str(e)}")
+            return None
+    
+    def save_template(self, template_type: str, template_content: str) -> bool:
+        """
+        Save template to DynamoDB
+        
+        Args:
+            template_type: Type of template ('buildspec' or 'manifest')
+            template_content: The template content to save
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Use special key format for templates
+            template_key = f"_TEMPLATE_{template_type}"
+            
+            item = {
+                'pipeline_name': template_key,
+                'template_content': template_content,
+                'template_type': template_type,
+                'lastUpdated': datetime.now().isoformat()
+            }
+            
+            # Put item in DynamoDB
+            self.table.put_item(Item=item)
+            print(f"✅ Saved {template_type} template to DynamoDB")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error saving {template_type} template: {str(e)}")
+            return False

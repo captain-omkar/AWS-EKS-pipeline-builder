@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { getApiUrl } from '../config';
+import { generateScalingManifestFromTemplate } from '../utils/scalingManifestTemplate';
 
 export interface HPAConfig {
   type: 'hpa';
@@ -17,6 +18,7 @@ export interface KafkaScalingConfig {
   topicName: string;
   consumerGroup: string;
   bootstrapServers: string;
+  lagThreshold: number;
 }
 
 export type ScalingConfig = HPAConfig | KafkaScalingConfig;
@@ -59,8 +61,14 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
     maxPods: config?.type === 'kafka' ? config.maxPods : 10,
     topicName: config?.type === 'kafka' ? config.topicName : '',
     consumerGroup: config?.type === 'kafka' ? config.consumerGroup : '',
-    bootstrapServers: config?.type === 'kafka' ? config.bootstrapServers : ''
+    bootstrapServers: config?.type === 'kafka' ? config.bootstrapServers : '',
+    lagThreshold: config?.type === 'kafka' ? config.lagThreshold : 10
   });
+
+  // Preview State
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewManifest, setPreviewManifest] = useState<string>('');
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   // Fetch bootstrap server options from deployment settings
   useEffect(() => {
@@ -76,6 +84,31 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
     };
     fetchBootstrapServerOptions();
   }, []);
+
+  // Generate preview manifest when config changes
+  useEffect(() => {
+    const generatePreview = async () => {
+      if (showPreview) {
+        setLoadingPreview(true);
+        try {
+          const currentConfig = scalingType === 'hpa' ? hpaConfig : kafkaConfig;
+          const manifest = await generateScalingManifestFromTemplate(
+            pipelineName,
+            pipelineName, // using pipelineName as serviceName
+            namespace,
+            currentConfig
+          );
+          setPreviewManifest(manifest);
+        } catch (error) {
+          console.error('Failed to generate preview:', error);
+          setPreviewManifest('Failed to generate preview manifest');
+        } finally {
+          setLoadingPreview(false);
+        }
+      }
+    };
+    generatePreview();
+  }, [showPreview, scalingType, hpaConfig, kafkaConfig, pipelineName, namespace]);
 
   const handleSave = () => {
     if (scalingType === 'hpa') {
@@ -94,7 +127,8 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
              kafkaConfig.maxPods > kafkaConfig.minPods &&
              kafkaConfig.topicName.trim() !== '' &&
              kafkaConfig.consumerGroup.trim() !== '' &&
-             kafkaConfig.bootstrapServers.trim() !== '';
+             kafkaConfig.bootstrapServers.trim() !== '' &&
+             kafkaConfig.lagThreshold > 0;
     }
   };
 
@@ -103,10 +137,12 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
       <div className="modal-content scaling-config-modal">
         <div className="modal-header">
           <h2>Scaling Configuration</h2>
-          <button className="close-button" onClick={onClose}>&times;</button>
+          <button type="button" className="close-button" onClick={onClose}>&times;</button>
         </div>
 
         <div className="scaling-config-content">
+          {!showPreview ? (
+            <>
           <div className="config-info">
             <p><strong>Pipeline:</strong> {pipelineName}</p>
             <p><strong>Namespace:</strong> {namespace}</p>
@@ -247,21 +283,66 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
                   ))}
                 </datalist>
               </div>
+
+              <div className="form-group">
+                <label>Lag Threshold:</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={kafkaConfig.lagThreshold}
+                  onChange={(e) => setKafkaConfig({...kafkaConfig, lagThreshold: parseInt(e.target.value) || 10})}
+                  placeholder="e.g., 10"
+                />
+                <small className="help-text">The lag threshold that triggers scaling</small>
+              </div>
             </div>
           )}
 
           <div className="button-group">
+            <button
+              type="button"
+              className="preview-button"
+              onClick={() => setShowPreview(true)}
+              disabled={!isValid()}
+            >
+              Preview
+            </button>
             <button 
+              type="button"
               className="save-button" 
               onClick={handleSave}
               disabled={!isValid()}
             >
-              Save Scaling Configuration
+              Save
             </button>
-            <button className="cancel-button" onClick={onClose}>
+            <button type="button" className="cancel-button" onClick={onClose}>
               Cancel
             </button>
           </div>
+            </>
+          ) : (
+            <div className="scaling-preview">
+              <div className="preview-header">
+                <h3>{scalingType === 'hpa' ? 'HPA' : 'Kafka Scaling'} Manifest Preview</h3>
+                <button type="button" className="back-button" onClick={() => setShowPreview(false)}>
+                  Back
+                </button>
+              </div>
+              <pre className="manifest-preview">
+                {loadingPreview ? 'Loading preview...' : previewManifest}
+              </pre>
+              <div className="button-group">
+                <button 
+                  type="button"
+                  className="save-button" 
+                  onClick={handleSave}
+                  disabled={!isValid()}
+                >
+                  Save & Close
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
