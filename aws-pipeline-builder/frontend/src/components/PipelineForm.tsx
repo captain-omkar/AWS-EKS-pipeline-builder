@@ -114,6 +114,10 @@ const PipelineForm: React.FC = () => {
     return id;
   });
   const [lockRefreshInterval, setLockRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  
+  // Pipeline Name Validation State
+  const [pipelineNameErrors, setPipelineNameErrors] = useState<{ [key: number]: string[] }>({});
+  const [validatingPipelineName, setValidatingPipelineName] = useState<{ [key: number]: boolean }>({});
 
   // ============================================================================
   // COMPONENT INITIALIZATION EFFECTS
@@ -301,6 +305,27 @@ const PipelineForm: React.FC = () => {
   }, [isEditMode, editPipeline, defaultBuildspec]);
 
   /**
+   * EFFECT 3: Debounced Pipeline Name Validation
+   * -------------------------------------------
+   * Validates pipeline names with a 500ms debounce to avoid excessive API calls
+   */
+  useEffect(() => {
+    const timers: { [key: number]: NodeJS.Timeout } = {};
+    
+    pipelines.forEach((pipeline, index) => {
+      if (pipeline.pipelineName && !isEditMode) {
+        timers[index] = setTimeout(() => {
+          validatePipelineName(pipeline.pipelineName, index);
+        }, 500);
+      }
+    });
+    
+    return () => {
+      Object.values(timers).forEach(timer => clearTimeout(timer));
+    };
+  }, [pipelines.map(p => p.pipelineName).join(','), isEditMode]);
+
+  /**
    * ADD NEW PIPELINE CONFIGURATION
    * ------------------------------
    * Creates a new pipeline form entry with default values.
@@ -433,6 +458,39 @@ const PipelineForm: React.FC = () => {
       setExpandedEnvVars(expandedEnvVars.filter(i => i !== pipelineIndex));
     } else {
       setExpandedEnvVars([...expandedEnvVars, pipelineIndex]);
+    }
+  };
+
+  /**
+   * Validate pipeline name against AWS requirements and check for existing pipelines
+   */
+  const validatePipelineName = async (pipelineName: string, pipelineIndex: number) => {
+    if (!pipelineName) {
+      setPipelineNameErrors(prev => ({ ...prev, [pipelineIndex]: [] }));
+      return;
+    }
+
+    setValidatingPipelineName(prev => ({ ...prev, [pipelineIndex]: true }));
+    
+    try {
+      const response = await axios.post(getApiUrl('/api/validate-pipeline-name'), {
+        pipelineName: pipelineName
+      });
+      
+      if (response.data.success) {
+        setPipelineNameErrors(prev => ({ 
+          ...prev, 
+          [pipelineIndex]: response.data.errors || [] 
+        }));
+      }
+    } catch (error) {
+      console.error('Pipeline name validation error:', error);
+      setPipelineNameErrors(prev => ({ 
+        ...prev, 
+        [pipelineIndex]: ['Failed to validate pipeline name'] 
+      }));
+    } finally {
+      setValidatingPipelineName(prev => ({ ...prev, [pipelineIndex]: false }));
     }
   };
 
@@ -672,15 +730,59 @@ const PipelineForm: React.FC = () => {
               
               {/* BASIC PIPELINE INFORMATION - Some fields read-only in edit mode */}
               <div className="form-group">
-                <label>Pipeline Name: {isEditMode && <span style={{ color: '#666' }}>(Read-only)</span>}</label>
-                <input
-                  type="text"
-                  value={pipeline.pipelineName}
-                  onChange={(e) => !isEditMode && updatePipeline(pIndex, 'pipelineName', e.target.value)}
-                  required
-                  readOnly={isEditMode}
-                  style={isEditMode ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {}}
-                />
+                <label>
+                  Pipeline Name: 
+                  {isEditMode && <span style={{ color: '#666' }}>(Read-only)</span>}
+                  {!isEditMode && (
+                    <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '10px' }}>
+                      (3-32 characters, lowercase, alphanumeric and hyphens only)
+                    </span>
+                  )}
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={pipeline.pipelineName}
+                    onChange={(e) => {
+                      if (!isEditMode) {
+                        const value = e.target.value.toLowerCase(); // Force lowercase
+                        updatePipeline(pIndex, 'pipelineName', value);
+                      }
+                    }}
+                    required
+                    readOnly={isEditMode}
+                    maxLength={32}
+                    style={{
+                      ...isEditMode ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {},
+                      borderColor: pipelineNameErrors[pIndex]?.length > 0 ? '#f44336' : undefined,
+                      paddingRight: '60px'
+                    }}
+                  />
+                  {!isEditMode && (
+                    <span style={{
+                      position: 'absolute',
+                      right: '10px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      fontSize: '0.85em',
+                      color: pipeline.pipelineName.length > 32 ? '#f44336' : '#666'
+                    }}>
+                      {pipeline.pipelineName.length}/32
+                    </span>
+                  )}
+                </div>
+                {validatingPipelineName[pIndex] && (
+                  <div style={{ fontSize: '0.85em', color: '#ff9800', marginTop: '5px' }}>
+                    Validating pipeline name...
+                  </div>
+                )}
+                {pipelineNameErrors[pIndex]?.length > 0 && (
+                  <div style={{ fontSize: '0.85em', color: '#f44336', marginTop: '5px' }}>
+                    {pipelineNameErrors[pIndex].map((error, idx) => (
+                      <div key={idx}>• {error}</div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="form-group">

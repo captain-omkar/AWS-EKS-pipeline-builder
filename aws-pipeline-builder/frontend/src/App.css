@@ -1,3 +1,8 @@
+/* Global box-sizing fix */
+* {
+  box-sizing: border-box;
+}
+
 .App {
   min-height: 100vh;
   background-color: #e3f2fd;
@@ -40,6 +45,9 @@
   padding: 20px;
   margin-bottom: 20px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .section h2 {
@@ -55,6 +63,9 @@
   padding: 15px;
   margin-bottom: 15px;
   background: #f5f5f5;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .pipeline-config h3 {
@@ -91,6 +102,8 @@
   margin-top: 20px;
   padding-top: 15px;
   border-top: 1px solid #ddd;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .env-vars h4 {
@@ -523,6 +536,9 @@ button[type="button"]:hover {
   display: flex;
   align-items: center;
   gap: 15px;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
 }
 
 .deployment-config-btn {
@@ -678,6 +694,7 @@ button[type="button"]:hover {
   padding: 20px;
   max-width: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .inline-header {
@@ -863,6 +880,9 @@ button[type="button"]:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
 }
 
 .build-config-btn {
@@ -888,6 +908,8 @@ button[type="button"]:hover {
   border-radius: 4px;
   padding: 15px;
   margin-top: 10px;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .build-config-section .config-info {
@@ -1409,6 +1431,9 @@ button[type="button"]:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-wrap: wrap;
 }
 
 .scaling-config-btn {

@@ -372,6 +372,137 @@ def upload_scaling_manifest_to_codecommit(repo_name, pipeline_name, namespace, s
     commit_message = f'Add/Update {scaling_type.upper()} scaling manifest for {pipeline_name} pipeline'
     return upload_file_to_codecommit(repo_name, file_path, scaling_manifest, commit_message)
 
+def rollback_pipeline_resources(created_resources, pipeline_name):
+    """
+    Rollback any resources that were created during failed pipeline creation.
+    This ensures atomic pipeline creation - either all resources are created or none.
+    
+    Args:
+        created_resources: Dict tracking which resources were created
+        pipeline_name: Name of the pipeline being rolled back
+    
+    Returns:
+        List of any errors encountered during rollback
+    """
+    rollback_errors = []
+    
+    try:
+        print(f"\n🔄 Starting rollback for pipeline: {pipeline_name}")
+        
+        # Delete CodePipeline
+        if created_resources.get('codepipeline'):
+            try:
+                codepipeline.delete_pipeline(name=created_resources['codepipeline'])
+                print(f"🗑️ Deleted CodePipeline: {created_resources['codepipeline']}")
+            except Exception as e:
+                rollback_errors.append(f"Failed to delete CodePipeline: {str(e)}")
+        
+        # Delete CodeBuild project
+        if created_resources.get('codebuild_project'):
+            try:
+                codebuild.delete_project(name=created_resources['codebuild_project'])
+                print(f"🗑️ Deleted CodeBuild project: {created_resources['codebuild_project']}")
+            except Exception as e:
+                rollback_errors.append(f"Failed to delete CodeBuild project: {str(e)}")
+        
+        # Delete ECR repository
+        if created_resources.get('ecr_repository'):
+            try:
+                ecr.delete_repository(repositoryName=created_resources['ecr_repository'], force=True)
+                print(f"🗑️ Deleted ECR repository: {created_resources['ecr_repository']}")
+            except Exception as e:
+                rollback_errors.append(f"Failed to delete ECR repository: {str(e)}")
+        
+        # Delete S3 bucket
+        if created_resources.get('s3_bucket'):
+            try:
+                s3_client = boto3.client('s3')
+                # Delete all objects in bucket first
+                try:
+                    objects = s3_client.list_objects_v2(Bucket=created_resources['s3_bucket'])
+                    if 'Contents' in objects:
+                        delete_keys = [{'Key': obj['Key']} for obj in objects['Contents']]
+                        s3_client.delete_objects(Bucket=created_resources['s3_bucket'], Delete={'Objects': delete_keys})
+                except:
+                    pass  # Bucket might be empty
+                
+                s3_client.delete_bucket(Bucket=created_resources['s3_bucket'])
+                print(f"🗑️ Deleted S3 bucket: {created_resources['s3_bucket']}")
+            except Exception as e:
+                rollback_errors.append(f"Failed to delete S3 bucket: {str(e)}")
+        
+        # Note about CodeCommit files
+        for file_info in created_resources.get('codecommit_files', []):
+            print(f"ℹ️ CodeCommit file uploaded (cannot rollback): {file_info}")
+    
+    except Exception as e:
+        rollback_errors.append(f"General rollback error: {str(e)}")
+    
+    if rollback_errors:
+        print(f"⚠️ Rollback completed with some errors: {'; '.join(rollback_errors)}")
+    else:
+        print(f"✅ Successfully rolled back all resources for pipeline: {pipeline_name}")
+    
+    return rollback_errors
+
+@app.route('/api/validate-pipeline-name', methods=['POST'])
+def validate_pipeline_name():
+    """
+    Validate pipeline name against AWS service requirements.
+    Pipeline names must be valid for ECR, CodeBuild, CodePipeline, and S3.
+    """
+    try:
+        data = request.json
+        pipeline_name = data.get('pipelineName', '')
+        
+        errors = []
+        
+        # Check if name is provided
+        if not pipeline_name:
+            errors.append('Pipeline name is required')
+            return jsonify({
+                'success': False,
+                'valid': False,
+                'errors': errors
+            })
+        
+        # Check minimum length (S3 requires at least 3 characters)
+        if len(pipeline_name) < 3:
+            errors.append('Pipeline name must be at least 3 characters')
+        
+        # Check maximum length considering S3 bucket suffix
+        if len(pipeline_name) > 32:
+            errors.append('Pipeline name must not exceed 32 characters')
+        
+        # Must be lowercase for ECR compatibility
+        if pipeline_name != pipeline_name.lower():
+            errors.append('Pipeline name must be lowercase')
+        
+        # ECR is the most restrictive - no underscores allowed, must start with letter or number
+        import re
+        if not re.match(r'^[a-z0-9][a-z0-9-]*$', pipeline_name):
+            errors.append('Pipeline name must start with a letter or number and contain only lowercase letters, numbers, and hyphens')
+        
+        # Check if pipeline already exists
+        if not errors:
+            try:
+                codepipeline.get_pipeline(name=pipeline_name)
+                errors.append(f'Pipeline "{pipeline_name}" already exists')
+            except codepipeline.exceptions.PipelineNotFoundException:
+                pass  # Good, pipeline doesn't exist
+        
+        return jsonify({
+            'success': True,
+            'valid': len(errors) == 0,
+            'errors': errors
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/pipelines', methods=['POST'])
 def create_pipelines():
     """
@@ -402,6 +533,50 @@ def create_pipelines():
             buildspec_content = pipeline_config.get('buildspec', None)
             compute_type = pipeline_config['computeType']
             env_vars = pipeline_config.get('environmentVariables', [])
+            
+            # Validate pipeline name format first
+            validation_errors = []
+            
+            # Check if name is provided
+            if not pipeline_name:
+                validation_errors.append('Pipeline name is required')
+            else:
+                # Check minimum length (S3 requires at least 3 characters)
+                if len(pipeline_name) < 3:
+                    validation_errors.append('Pipeline name must be at least 3 characters')
+                
+                # Check maximum length
+                if len(pipeline_name) > 32:
+                    validation_errors.append('Pipeline name must not exceed 32 characters')
+                
+                # Must be lowercase for ECR compatibility
+                if pipeline_name != pipeline_name.lower():
+                    validation_errors.append('Pipeline name must be lowercase')
+                
+                # ECR is the most restrictive - no underscores allowed, must start with letter or number
+                import re
+                if not re.match(r'^[a-z0-9][a-z0-9-]*$', pipeline_name):
+                    validation_errors.append('Pipeline name must start with a letter or number and contain only lowercase letters, numbers, and hyphens')
+            
+            # If validation fails, skip this pipeline
+            if validation_errors:
+                error_msg = f"Pipeline name validation failed: {'; '.join(validation_errors)}"
+                created_pipelines.append({
+                    'name': pipeline_name,
+                    'success': False,
+                    'error': error_msg
+                })
+                print(f"❌ {error_msg}")
+                continue
+            
+            # Track created resources for rollback in case of failure
+            created_resources = {
+                'ecr_repository': None,
+                'codebuild_project': None,
+                'codepipeline': None,
+                's3_bucket': None,
+                'codecommit_files': []
+            }
             
             try:
                 print(f"Validating resources for pipeline: {pipeline_name}")
@@ -483,6 +658,7 @@ def create_pipelines():
                         repositoryName=pipeline_name,
                         imageScanningConfiguration={'scanOnPush': True}
                     )
+                    created_resources['ecr_repository'] = pipeline_name
                     print(f"✅ Created ECR repository: {pipeline_name}")
                 except ecr.exceptions.RepositoryAlreadyExistsException:
                     print(f"⚠️ ECR repository {pipeline_name} already exists")
@@ -491,10 +667,15 @@ def create_pipelines():
                 bucket_name = f"{pipeline_name}-artifacts-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 s3 = boto3.client('s3')
                 try:
-                    s3.create_bucket(
-                        Bucket=bucket_name,
-                        CreateBucketConfiguration={'LocationConstraint': boto3.Session().region_name}
-                    )
+                    region = boto3.Session().region_name
+                    if region == 'us-east-1':
+                        s3.create_bucket(Bucket=bucket_name)
+                    else:
+                        s3.create_bucket(
+                            Bucket=bucket_name,
+                            CreateBucketConfiguration={'LocationConstraint': region}
+                        )
+                    created_resources['s3_bucket'] = bucket_name
                     print(f"✅ Created S3 bucket: {bucket_name}")
                 except Exception as e:
                     # Use a fallback bucket name if creation fails
@@ -586,6 +767,7 @@ def create_pipelines():
                 
                 try:
                     codebuild.create_project(**build_project)
+                    created_resources['codebuild_project'] = codebuild_project_name
                     print(f"✅ Created CodeBuild project: {codebuild_project_name}")
                 except codebuild.exceptions.ResourceAlreadyExistsException:
                     print(f"⚠️ CodeBuild project {codebuild_project_name} already exists")
@@ -678,6 +860,7 @@ def create_pipelines():
                 
                 try:
                     response = codepipeline.create_pipeline(**pipeline)
+                    created_resources['codepipeline'] = pipeline_name
                     pipeline_arn = response.get('pipeline', {}).get('arn') or f"arn:aws:codepipeline:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:pipeline/{pipeline_name}"
                     print(f"✅ Created CodePipeline: {pipeline_name}")
                 except codepipeline.exceptions.PipelineNameInUseException:
@@ -700,6 +883,7 @@ def create_pipelines():
                                 pipeline_name=pipeline_name,
                                 content=appsettings_content
                             )
+                            created_resources['codecommit_files'].append(f"{appsettings_repo}/{pipeline_name}/appsettings.json")
                             print(f"✅ Uploaded appsettings to {appsettings_repo}/{pipeline_name}/")
                         except Exception as e:
                             print(f"⚠️ Failed to upload appsettings: {str(e)}")
@@ -722,6 +906,7 @@ def create_pipelines():
                                 deployment_config=deployment_config,
                                 ecr_uri=ecr_uri
                             )
+                            created_resources['codecommit_files'].append(f"{manifest_repo}/{pipeline_name}/{pipeline_name}.yml")
                             print(f"✅ Uploaded manifest to {manifest_repo}/{pipeline_name}/")
                         except Exception as e:
                             print(f"⚠️ Failed to upload manifest: {str(e)}")
@@ -738,32 +923,100 @@ def create_pipelines():
                             scaling_config=scaling_config
                         )
                         scaling_type = scaling_config.get('type', 'hpa')
+                        created_resources['codecommit_files'].append(f"{manifest_repo}/{pipeline_name}/{pipeline_name}-{scaling_type}.yml")
                         print(f"✅ Uploaded {scaling_type} scaling manifest to {manifest_repo}/{pipeline_name}/")
                     except Exception as e:
                         print(f"⚠️ Failed to upload scaling manifest: {str(e)}")
                 
+                # Save pipeline metadata
+                try:
+                    pipeline_metadata = {
+                        'name': pipeline_name,
+                        'pipelineName': pipeline_name,
+                        'repositoryName': repo_name,
+                        'branchName': branch_name,
+                        'buildspecPath': buildspec_path,
+                        'useBuildspecFile': use_buildspec_file,
+                        'buildspec': buildspec_content if not use_buildspec_file and buildspec_content else None,
+                        'computeType': compute_type,
+                        'environmentVariables': env_vars,
+                        'deploymentConfig': pipeline_config.get('deploymentConfig'),
+                        'scalingConfig': pipeline_config.get('scalingConfig'),
+                        'pipelineArn': pipeline_arn,
+                        'resources': {
+                            'pipeline': pipeline_name,
+                            'codebuild': f"{pipeline_name}-build",
+                            'ecrRepository': pipeline_name,
+                            's3Bucket': bucket_name,
+                            'appsettingsRepo': next((var['value'] for var in env_vars if var.get('name') == 'APPSETTINGS_REPO'), None),
+                            'manifestRepo': next((var['value'] for var in env_vars if var.get('name') == 'MANIFEST_REPO'), None)
+                        },
+                        'createdAt': datetime.now().isoformat(),
+                        'lastUpdated': datetime.now().isoformat()
+                    }
+                    
+                    if save_pipeline_metadata(pipeline_metadata):
+                        print(f"✅ Pipeline metadata saved for: {pipeline_name}")
+                    else:
+                        print(f"⚠️ Failed to save pipeline metadata for: {pipeline_name}")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error saving pipeline metadata for {pipeline_name}: {str(e)}")
+                
                 created_pipelines.append({
                     'pipelineName': pipeline_name,
                     'pipelineArn': pipeline_arn,
-                    'status': 'created'
+                    'status': 'created',
+                    's3Bucket': bucket_name  # Include S3 bucket name in response
                 })
                 
                 print(f"✅ Pipeline creation completed for: {pipeline_name}")
                 
             except Exception as pipeline_error:
                 print(f"❌ Error creating pipeline {pipeline_name}: {str(pipeline_error)}")
+                
+                # Perform rollback to ensure atomic creation
+                rollback_errors = rollback_pipeline_resources(created_resources, pipeline_name)
+                
+                error_details = {
+                    'creation_error': str(pipeline_error),
+                    'rollback_errors': rollback_errors if rollback_errors else None
+                }
+                
                 created_pipelines.append({
                     'pipelineName': pipeline_name,
                     'pipelineArn': None,
                     'status': 'error',
-                    'error': str(pipeline_error)
+                    'error': error_details
                 })
         
-        return jsonify({
-            'success': True,
-            'pipelines': created_pipelines,
-            'message': f"Processed {len(pipelines)} pipeline(s)"
-        })
+        # Check if any pipelines failed
+        failed_pipelines = [p for p in created_pipelines if p.get('status') == 'error']
+        successful_pipelines = [p for p in created_pipelines if p.get('status') == 'created']
+        
+        if failed_pipelines and not successful_pipelines:
+            # All pipelines failed
+            return jsonify({
+                'success': False,
+                'pipelines': created_pipelines,
+                'message': f"Failed to create {len(failed_pipelines)} pipeline(s). All resources have been rolled back.",
+                'error': 'Pipeline creation failed'
+            }), 500
+        elif failed_pipelines:
+            # Some pipelines failed
+            return jsonify({
+                'success': False,
+                'pipelines': created_pipelines,
+                'message': f"Created {len(successful_pipelines)} pipeline(s), failed {len(failed_pipelines)} pipeline(s). Failed resources have been rolled back.",
+                'warning': 'Partial failure'
+            }), 207  # Multi-status
+        else:
+            # All pipelines succeeded
+            return jsonify({
+                'success': True,
+                'pipelines': created_pipelines,
+                'message': f"Successfully created {len(successful_pipelines)} pipeline(s)"
+            })
         
     except Exception as e:
         print(f"❌ Global error in pipeline creation: {str(e)}")
