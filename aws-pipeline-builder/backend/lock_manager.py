@@ -8,7 +8,7 @@ import threading
 
 
 class LockManager:
-    def __init__(self, lock_timeout_minutes: int = 30):
+    def __init__(self, lock_timeout_minutes: int = 10):
         """
         Initialize lock manager
         
@@ -56,8 +56,19 @@ class LockManager:
                         'expires_at': lock_expiry.isoformat(),
                         'message': f"Pipeline is currently being edited by {lock_info['user_id']}"
                     }
+                elif lock_info['user_id'] == user_id:
+                    # Same user is acquiring the lock again - just refresh it
+                    self.locks[pipeline_name]['last_activity'] = current_time
+                    return {
+                        'success': True,
+                        'locked': True,
+                        'locked_by': user_id,
+                        'locked_at': lock_info['acquired_at'].isoformat(),
+                        'expires_at': lock_expiry.isoformat(),
+                        'message': 'Lock refreshed for same user'
+                    }
             
-            # Acquire the lock
+            # Acquire the lock (new lock or force)
             self.locks[pipeline_name] = {
                 'user_id': user_id,
                 'acquired_at': current_time,
@@ -73,13 +84,14 @@ class LockManager:
                 'message': 'Lock acquired successfully'
             }
     
-    def release_lock(self, pipeline_name: str, user_id: str) -> Dict[str, Any]:
+    def release_lock(self, pipeline_name: str, user_id: str, force: bool = False) -> Dict[str, Any]:
         """
         Release a lock on a pipeline
         
         Args:
             pipeline_name: Name of the pipeline to unlock
             user_id: ID of the user releasing the lock
+            force: Force release even if user doesn't own the lock
             
         Returns:
             Dict with release status
@@ -92,7 +104,7 @@ class LockManager:
                 }
             
             lock_info = self.locks[pipeline_name]
-            if lock_info['user_id'] != user_id:
+            if not force and lock_info['user_id'] != user_id:
                 return {
                     'success': False,
                     'message': f"Cannot release lock held by {lock_info['user_id']}"

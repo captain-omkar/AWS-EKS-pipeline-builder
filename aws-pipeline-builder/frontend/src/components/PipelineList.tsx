@@ -54,10 +54,96 @@ const PipelineList: React.FC = () => {
 
   useEffect(() => {
     fetchPipelines();
-    // Refresh pipelines every 30 seconds to update lock status
-    const interval = setInterval(fetchPipelines, 30000);
-    return () => clearInterval(interval);
+    // Refresh lock status more frequently (every 3 seconds)
+    const lockInterval = setInterval(() => {
+      updateLockStatus();
+    }, 3000);
+    
+    // Check for new pipelines less frequently (every 10 seconds)
+    const pipelineInterval = setInterval(() => {
+      checkForNewPipelines();
+    }, 10000);
+    
+    return () => {
+      clearInterval(lockInterval);
+      clearInterval(pipelineInterval);
+    };
   }, []);
+
+  const checkForNewPipelines = async () => {
+    try {
+      // Use lightweight summary endpoint
+      const summaryResponse = await axios.get(getApiUrl('/api/pipelines/summary'));
+      
+      if (summaryResponse.data.success) {
+        const currentCount = summaryResponse.data.count;
+        const currentNames = summaryResponse.data.names;
+        
+        // Get existing pipeline names
+        const existingNames = pipelines.map(p => p.name).sort();
+        
+        // Check if there are new pipelines or deletions
+        const hasChanges = currentCount !== pipelines.length || 
+                          JSON.stringify(currentNames) !== JSON.stringify(existingNames);
+        
+        if (hasChanges) {
+          console.log('Pipeline changes detected, refreshing list...');
+          // Fetch complete pipeline data including metadata
+          await fetchPipelines();
+        }
+      }
+    } catch (error) {
+      // Silently ignore errors during polling
+    }
+  };
+
+  const updateLockStatus = async () => {
+    try {
+      // Use lightweight endpoint to only fetch lock status
+      const lockResponse = await axios.get(getApiUrl('/api/pipelines/lock-status'));
+      
+      if (lockResponse.data.success) {
+        const lockStatuses = lockResponse.data.pipelines;
+        
+        // Update only the lock status for existing pipelines without re-rendering
+        setPipelines(prevPipelines => {
+          return prevPipelines.map(pipeline => {
+            const lockInfo = lockStatuses.find((p: any) => p.name === pipeline.name);
+            if (lockInfo) {
+              // Only update if lock status actually changed
+              const newLockStatus = lockInfo.lockStatus;
+              if (JSON.stringify(pipeline.lockStatus) !== JSON.stringify(newLockStatus)) {
+                return {
+                  ...pipeline,
+                  lockStatus: newLockStatus
+                };
+              }
+            }
+            return pipeline;
+          });
+        });
+        
+        // Also update filtered pipelines
+        setFilteredPipelines(prevFiltered => {
+          return prevFiltered.map(pipeline => {
+            const lockInfo = lockStatuses.find((p: any) => p.name === pipeline.name);
+            if (lockInfo) {
+              const newLockStatus = lockInfo.lockStatus;
+              if (JSON.stringify(pipeline.lockStatus) !== JSON.stringify(newLockStatus)) {
+                return {
+                  ...pipeline,
+                  lockStatus: newLockStatus
+                };
+              }
+            }
+            return pipeline;
+          });
+        });
+      }
+    } catch (error) {
+      // Silently ignore errors to avoid spamming console during polling
+    }
+  };
 
   const fetchPipelines = async () => {
     try {
@@ -121,7 +207,7 @@ const PipelineList: React.FC = () => {
   const currentPipelines = filteredPipelines.slice(startIndex, endIndex);
 
   const handleEdit = async (pipeline: PipelineMetadata) => {
-    // Check if pipeline is locked by someone else
+    // Check if pipeline is locked by someone else (not the current user)
     if (pipeline.lockStatus && pipeline.lockStatus.locked_by !== userId) {
       const lockTime = new Date(pipeline.lockStatus.locked_at).toLocaleString();
       const expiryTime = new Date(pipeline.lockStatus.expires_at).toLocaleString();
@@ -157,6 +243,7 @@ const PipelineList: React.FC = () => {
       alert(`Error deleting pipeline: ${err.response?.data?.error || err.message}`);
     }
   };
+
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -283,12 +370,11 @@ const PipelineList: React.FC = () => {
                     {pipeline.lockStatus && pipeline.lockStatus.locked_by !== userId ? (
                       <button 
                         className="edit-btn"
-                        title={`Locked by ${pipeline.lockStatus.locked_by}`}
+                        title={`Locked by ${pipeline.lockStatus.locked_by} - expires at ${new Date(pipeline.lockStatus.expires_at).toLocaleString()}`}
                         disabled={true}
                         style={{
                           opacity: 0.3,
                           cursor: 'not-allowed',
-                          pointerEvents: 'none',
                           backgroundColor: '#ccc'
                         }}
                       >

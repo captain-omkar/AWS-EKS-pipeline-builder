@@ -259,6 +259,8 @@ const PipelineForm: React.FC = () => {
    */
   useEffect(() => {
     if (isEditMode && editPipeline) {
+      console.log('📝 Edit mode: Loading pipeline data and acquiring lock for:', editPipeline.name);
+      
       // Convert metadata format to form format
       const pipelineConfig: PipelineConfig = {
         pipelineName: editPipeline.name,
@@ -288,21 +290,31 @@ const PipelineForm: React.FC = () => {
       // Fetch existing appsettings content from CodeCommit
       fetchExistingAppsettings(editPipeline.name);
       
-      // Acquire lock for editing
+      // Acquire lock for editing (only once)
       acquireLock(editPipeline.name);
       
       // Clear session storage to prevent stale data
       sessionStorage.removeItem('editPipeline');
     }
-    
+  }, [isEditMode, editPipeline?.name]); // Simplified dependencies
+
+  /**
+   * EFFECT: Cleanup lock on component unmount
+   * -----------------------------------------
+   * Ensures lock is released when user navigates away
+   */
+  useEffect(() => {
     // Cleanup on unmount
     return () => {
-      if (isEditMode && editPipeline && lockRefreshInterval) {
-        clearInterval(lockRefreshInterval);
+      if (isEditMode && editPipeline) {
+        console.log('🔓 Component unmounting, releasing lock for:', editPipeline.name);
         releaseLock(editPipeline.name);
+        if (lockRefreshInterval) {
+          clearInterval(lockRefreshInterval);
+        }
       }
     };
-  }, [isEditMode, editPipeline, defaultBuildspec]);
+  }, []); // Only run on mount/unmount
 
   /**
    * EFFECT 3: Debounced Pipeline Name Validation
@@ -735,7 +747,7 @@ const PipelineForm: React.FC = () => {
                   {isEditMode && <span style={{ color: '#666' }}>(Read-only)</span>}
                   {!isEditMode && (
                     <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '10px' }}>
-                      (3-32 characters, lowercase, alphanumeric and hyphens only)
+                      (3-60 characters, lowercase, alphanumeric and hyphens only)
                     </span>
                   )}
                 </label>
@@ -751,7 +763,7 @@ const PipelineForm: React.FC = () => {
                     }}
                     required
                     readOnly={isEditMode}
-                    maxLength={32}
+                    maxLength={60}
                     style={{
                       ...isEditMode ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {},
                       borderColor: pipelineNameErrors[pIndex]?.length > 0 ? '#f44336' : undefined,
@@ -765,9 +777,9 @@ const PipelineForm: React.FC = () => {
                       top: '50%',
                       transform: 'translateY(-50%)',
                       fontSize: '0.85em',
-                      color: pipeline.pipelineName.length > 32 ? '#f44336' : '#666'
+                      color: pipeline.pipelineName.length > 60 ? '#f44336' : '#666'
                     }}>
-                      {pipeline.pipelineName.length}/32
+                      {pipeline.pipelineName.length}/60
                     </span>
                   )}
                 </div>
@@ -1151,12 +1163,38 @@ const PipelineForm: React.FC = () => {
         </div>
 
         {/* SUBMIT BUTTON - Changes text and behavior based on mode */}
-        <button type="submit" disabled={loading} className="submit-button">
-          {loading 
-            ? (isEditMode ? 'Updating Pipeline...' : 'Creating Pipelines...') 
-            : (isEditMode ? 'Update Pipeline' : 'Create Pipelines')
-          }
-        </button>
+        <div className="form-buttons">
+          {isEditMode && (
+            <button 
+              type="button" 
+              onClick={() => {
+                // Release lock and navigate back
+                if (editPipeline) {
+                  releaseLock(editPipeline.name);
+                }
+                navigate('/pipelines');
+              }}
+              className="cancel-button"
+              style={{
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                padding: '12px 24px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                marginRight: '10px'
+              }}
+            >
+              Cancel Edit
+            </button>
+          )}
+          <button type="submit" disabled={loading} className="submit-button">
+            {loading 
+              ? (isEditMode ? 'Updating Pipeline...' : 'Creating Pipelines...') 
+              : (isEditMode ? 'Update Pipeline' : 'Create Pipelines')
+            }
+          </button>
+        </div>
       </form>
 
       {/* SUCCESS/ERROR MESSAGE DISPLAY */}

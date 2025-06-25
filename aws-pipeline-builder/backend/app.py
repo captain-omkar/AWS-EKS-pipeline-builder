@@ -470,9 +470,9 @@ def validate_pipeline_name():
         if len(pipeline_name) < 3:
             errors.append('Pipeline name must be at least 3 characters')
         
-        # Check maximum length considering S3 bucket suffix
-        if len(pipeline_name) > 32:
-            errors.append('Pipeline name must not exceed 32 characters')
+        # Check maximum length (S3 bucket naming now uses hash)
+        if len(pipeline_name) > 60:
+            errors.append('Pipeline name must not exceed 60 characters')
         
         # Must be lowercase for ECR compatibility
         if pipeline_name != pipeline_name.lower():
@@ -546,8 +546,8 @@ def create_pipelines():
                     validation_errors.append('Pipeline name must be at least 3 characters')
                 
                 # Check maximum length
-                if len(pipeline_name) > 32:
-                    validation_errors.append('Pipeline name must not exceed 32 characters')
+                if len(pipeline_name) > 60:
+                    validation_errors.append('Pipeline name must not exceed 60 characters')
                 
                 # Must be lowercase for ECR compatibility
                 if pipeline_name != pipeline_name.lower():
@@ -663,8 +663,14 @@ def create_pipelines():
                 except ecr.exceptions.RepositoryAlreadyExistsException:
                     print(f"⚠️ ECR repository {pipeline_name} already exists")
                 
-                # Create S3 bucket for artifacts
-                bucket_name = f"{pipeline_name}-artifacts-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                # Create S3 bucket for artifacts with simple naming
+                # Format: "{first_6_chars}-{timestamp}"
+                truncated_name = pipeline_name[:6].lower().replace('_', '-').replace(' ', '')
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                
+                bucket_name = f"{truncated_name}-{timestamp}"
+                print(f"Generated S3 bucket name: {bucket_name} (length: {len(bucket_name)})")
+                
                 s3 = boto3.client('s3')
                 try:
                     region = boto3.Session().region_name
@@ -678,9 +684,8 @@ def create_pipelines():
                     created_resources['s3_bucket'] = bucket_name
                     print(f"✅ Created S3 bucket: {bucket_name}")
                 except Exception as e:
-                    # Use a fallback bucket name if creation fails
-                    bucket_name = f"{pipeline_name}-artifacts"
-                    print(f"⚠️ Using fallback bucket name: {bucket_name}")
+                    print(f"❌ Failed to create S3 bucket {bucket_name}: {str(e)}")
+                    raise Exception(f"Failed to create S3 bucket: {str(e)}")
                 
                 # Get defaults
                 defaults = pipeline_config.get('defaults', {})
@@ -1029,6 +1034,62 @@ The new atomic implementation:
 4. Provides detailed status for each pipeline
 """
 
+@app.route('/api/pipelines/summary', methods=['GET'])
+def get_pipelines_summary():
+    """
+    Get pipeline summary (names and count) for detecting new pipelines.
+    """
+    try:
+        # List all pipelines
+        paginator = codepipeline.get_paginator('list_pipelines')
+        pipeline_names = []
+        
+        for page in paginator.paginate():
+            for pipeline in page['pipelines']:
+                pipeline_names.append(pipeline['name'])
+        
+        return jsonify({
+            'success': True,
+            'count': len(pipeline_names),
+            'names': sorted(pipeline_names)
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/pipelines/lock-status', methods=['GET'])
+def get_pipelines_lock_status():
+    """
+    Get only lock status for all pipelines (lightweight endpoint for polling).
+    """
+    try:
+        # Get all current locks
+        all_locks = lock_manager.get_all_locks()
+        
+        # List all pipelines
+        paginator = codepipeline.get_paginator('list_pipelines')
+        pipelines = []
+        
+        for page in paginator.paginate():
+            for pipeline in page['pipelines']:
+                pipeline_name = pipeline['name']
+                pipelines.append({
+                    'name': pipeline_name,
+                    'lockStatus': all_locks.get(pipeline_name)
+                })
+        
+        return jsonify({
+            'success': True,
+            'pipelines': pipelines
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/pipelines', methods=['GET'])
 def list_pipelines():
     """
@@ -1079,7 +1140,9 @@ def acquire_pipeline_lock(pipeline_name):
         user_id = data.get('userId', request.remote_addr)  # Use IP as fallback
         force = data.get('force', False)
         
+        print(f"🔒 ACQUIRE LOCK REQUEST: pipeline={pipeline_name}, user={user_id}, force={force}")
         result = lock_manager.acquire_lock(pipeline_name, user_id, force)
+        print(f"🔒 ACQUIRE LOCK RESULT: {result}")
         
         if result['success']:
             return jsonify(result)
@@ -1099,8 +1162,29 @@ def release_pipeline_lock(pipeline_name):
     try:
         data = request.json or {}
         user_id = data.get('userId', request.remote_addr)
+        force = data.get('force', False)
         
-        result = lock_manager.release_lock(pipeline_name, user_id)
+        print(f"🔓 RELEASE LOCK REQUEST: pipeline={pipeline_name}, user={user_id}, force={force}")
+        result = lock_manager.release_lock(pipeline_name, user_id, force)
+        print(f"🔓 RELEASE LOCK RESULT: {result}")
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/pipelines/<pipeline_name>/lock/force-release', methods=['POST'])
+def force_release_pipeline_lock(pipeline_name):
+    """
+    Force release a lock on a pipeline (emergency unlock).
+    """
+    try:
+        data = request.json or {}
+        user_id = data.get('userId', request.remote_addr)
+        
+        # Force release the lock regardless of who owns it
+        result = lock_manager.release_lock(pipeline_name, user_id, force=True)
         return jsonify(result)
     except Exception as e:
         return jsonify({
@@ -1773,12 +1857,20 @@ def delete_pipeline_resources(pipeline_name):
         errors = []
         
         # Get pipeline metadata to find repo information
+        print(f"Loading metadata for pipeline: {pipeline_name}")
         metadata = load_pipeline_metadata()
+        print(f"Total pipelines in metadata: {len(metadata.get('pipelines', []))}")
+        
         pipeline_meta = None
         for p in metadata.get('pipelines', []):
             if p.get('name') == pipeline_name:
                 pipeline_meta = p
+                print(f"Found pipeline metadata: {json.dumps(pipeline_meta, indent=2)}")
                 break
+        
+        if not pipeline_meta:
+            print(f"Warning: No metadata found for pipeline {pipeline_name}")
+            print(f"Available pipelines: {[p.get('name') for p in metadata.get('pipelines', [])]}")
         
         # 1. Delete CodePipeline
         try:
@@ -1810,10 +1902,22 @@ def delete_pipeline_resources(pipeline_name):
         
         # 4. Delete S3 artifact bucket
         try:
-            # First, get the pipeline configuration to find the S3 bucket name
-            try:
-                pipeline_details = codepipeline.get_pipeline(name=pipeline_name)
-                bucket_name = pipeline_details['pipeline']['artifactStore']['location']
+            bucket_name = None
+            
+            # First check if we have the bucket name in metadata
+            if pipeline_meta and pipeline_meta.get('resources', {}).get('s3Bucket'):
+                bucket_name = pipeline_meta['resources']['s3Bucket']
+                print(f"Found S3 bucket in metadata: {bucket_name}")
+            else:
+                # Try to get the pipeline configuration to find the S3 bucket name
+                try:
+                    pipeline_details = codepipeline.get_pipeline(name=pipeline_name)
+                    bucket_name = pipeline_details['pipeline']['artifactStore']['location']
+                    print(f"Found S3 bucket from pipeline config: {bucket_name}")
+                except:
+                    pass
+            
+            if bucket_name:
                 
                 # Delete all objects in the bucket first (S3 requires empty bucket for deletion)
                 s3 = boto3.client('s3')
@@ -1846,17 +1950,22 @@ def delete_pipeline_resources(pipeline_name):
                     errors.append(f"⚠️ S3 bucket {bucket_name} not found")
                 except Exception as e:
                     errors.append(f"❌ Failed to delete S3 bucket {bucket_name}: {str(e)}")
-                    
-            except codepipeline.exceptions.PipelineNotFoundException:
+            else:
                 # Pipeline doesn't exist, try to find buckets by pattern
                 s3 = boto3.client('s3')
                 response = s3.list_buckets()
-                pattern = f"{pipeline_name}-artifacts"
+                
+                # Look for buckets with our naming pattern
+                # Pattern: "{first_6_chars}-{timestamp}"
+                truncated_name = pipeline_name[:6].lower().replace('_', '-').replace(' ', '')
                 
                 found_buckets = []
                 for bucket in response.get('Buckets', []):
-                    if bucket['Name'].startswith(pattern):
-                        found_buckets.append(bucket['Name'])
+                    bucket_name = bucket['Name']
+                    # Check if bucket starts with our truncated name followed by a dash and timestamp
+                    if bucket_name.startswith(f"{truncated_name}-") and len(bucket_name.split('-')[-1]) == 14:
+                        found_buckets.append(bucket_name)
+                        print(f"Found matching bucket: {bucket_name}")
                 
                 if found_buckets:
                     for bucket_name in found_buckets:
