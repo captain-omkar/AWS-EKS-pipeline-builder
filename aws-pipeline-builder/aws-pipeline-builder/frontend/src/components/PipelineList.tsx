@@ -42,10 +42,6 @@ const PipelineList: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20); // Show 20 pipelines per page
-  
-  // Multiple selection for bulk operations
-  const [selectedPipelines, setSelectedPipelines] = useState<Set<string>>(new Set());
-  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [userId] = useState(() => {
     // Generate or retrieve user ID for lock management
     let id = localStorage.getItem('userId');
@@ -58,28 +54,21 @@ const PipelineList: React.FC = () => {
 
   useEffect(() => {
     fetchPipelines();
-    
-    // Auto-sync pipelines on initial load (after a short delay)
-    setTimeout(() => {
-      autoSyncAllPipelines();
-    }, 2000);
-    
     // Refresh lock status more frequently (every 3 seconds)
     const lockInterval = setInterval(() => {
       updateLockStatus();
     }, 3000);
     
-    // Check for new pipelines and auto-sync less frequently (every 60 seconds)
+    // Check for new pipelines less frequently (every 60 seconds)
     const pipelineInterval = setInterval(() => {
       checkForNewPipelines();
-      autoSyncAllPipelines(); // Auto-sync periodically
     }, 60000);
     
     return () => {
       clearInterval(lockInterval);
       clearInterval(pipelineInterval);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const checkForNewPipelines = async () => {
     try {
@@ -239,8 +228,7 @@ const PipelineList: React.FC = () => {
     if (pipeline.lockStatus && pipeline.lockStatus.locked_by !== userId) {
       const lockTime = new Date(pipeline.lockStatus.locked_at).toLocaleString();
       const expiryTime = new Date(pipeline.lockStatus.expires_at).toLocaleString();
-      setSyncNotification(`🔒 Pipeline locked by ${pipeline.lockStatus.locked_by} until ${expiryTime}`);
-      setTimeout(() => setSyncNotification(null), 5000);
+      alert(`This pipeline is currently being edited by ${pipeline.lockStatus.locked_by}.\n\nLocked at: ${lockTime}\nExpires at: ${expiryTime}\n\nPlease try again later.`);
       return;
     }
     
@@ -254,130 +242,25 @@ const PipelineList: React.FC = () => {
       // First, delete AWS resources
       const resourceResponse = await axios.delete(getApiUrl(`/api/pipelines/${pipelineName}/delete`));
       
-      // Show non-blocking notification
+      let message = '';
       if (resourceResponse.data.successes && resourceResponse.data.successes.length > 0) {
-        setSyncNotification(`✅ ${pipelineName} deleted successfully`);
-      } else if (resourceResponse.data.errors && resourceResponse.data.errors.length > 0) {
-        setSyncNotification(`⚠️ ${pipelineName} deleted with errors`);
-      } else {
-        setSyncNotification(`✅ ${pipelineName} deletion completed`);
+        message += 'Successfully deleted:\n' + resourceResponse.data.successes.join('\n');
       }
-      setTimeout(() => setSyncNotification(null), 4000);
+      if (resourceResponse.data.errors && resourceResponse.data.errors.length > 0) {
+        message += '\n\nErrors:\n' + resourceResponse.data.errors.join('\n');
+      }
+      
+      // Show the results
+      alert(message || 'Pipeline deletion completed');
       
       // Refresh the list
       fetchPipelines();
       setDeleteConfirm(null);
     } catch (err: any) {
-      setSyncNotification(`❌ Delete failed: ${err.response?.data?.error || err.message}`);
-      setTimeout(() => setSyncNotification(null), 5000);
+      alert(`Error deleting pipeline: ${err.response?.data?.error || err.message}`);
     }
   };
 
-  // Bulk selection functions
-  const togglePipelineSelection = (pipelineName: string) => {
-    const newSelected = new Set(selectedPipelines);
-    if (newSelected.has(pipelineName)) {
-      newSelected.delete(pipelineName);
-    } else {
-      newSelected.add(pipelineName);
-    }
-    setSelectedPipelines(newSelected);
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedPipelines.size === currentPipelines.length) {
-      setSelectedPipelines(new Set());
-    } else {
-      setSelectedPipelines(new Set(currentPipelines.map(p => p.name)));
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedPipelines.size === 0) return;
-    
-    try {
-      const deletePromises = Array.from(selectedPipelines).map(async (pipelineName) => {
-        try {
-          const response = await axios.delete(getApiUrl(`/api/pipelines/${pipelineName}/delete`));
-          return { pipelineName, success: true, response: response.data };
-        } catch (error: any) {
-          return { 
-            pipelineName, 
-            success: false, 
-            error: error.response?.data?.error || error.message 
-          };
-        }
-      });
-
-      const results = await Promise.all(deletePromises);
-      
-      // Create summary message
-      const successful = results.filter(r => r.success);
-      const failed = results.filter(r => !r.success);
-      
-      // Show non-blocking notification
-      if (successful.length > 0 && failed.length === 0) {
-        setSyncNotification(`✅ Successfully deleted ${successful.length} pipeline(s)`);
-      } else if (failed.length > 0 && successful.length === 0) {
-        setSyncNotification(`❌ Failed to delete ${failed.length} pipeline(s)`);
-      } else {
-        setSyncNotification(`⚠️ Deleted ${successful.length}, failed ${failed.length} pipeline(s)`);
-      }
-      setTimeout(() => setSyncNotification(null), 5000);
-      
-      // Clear selection and refresh list
-      setSelectedPipelines(new Set());
-      setShowBulkDeleteConfirm(false);
-      fetchPipelines();
-    } catch (err: any) {
-      setSyncNotification(`❌ Bulk deletion error: ${err.message}`);
-      setTimeout(() => setSyncNotification(null), 5000);
-    }
-  };
-
-  const [syncNotification, setSyncNotification] = useState<string | null>(null);
-
-  const handleSyncFromAWS = async (pipelineName: string) => {
-    try {
-      const response = await axios.get(getApiUrl(`/api/pipelines/${pipelineName}/sync`));
-      
-      if (response.data.success) {
-        // Show brief notification instead of alert
-        setSyncNotification(`✅ ${pipelineName} synced from AWS`);
-        setTimeout(() => setSyncNotification(null), 3000); // Auto-hide after 3 seconds
-        
-        // Refresh the pipeline list to show updated data
-        fetchPipelines();
-      } else {
-        setSyncNotification(`❌ Sync failed: ${response.data.error}`);
-        setTimeout(() => setSyncNotification(null), 5000);
-      }
-    } catch (error: any) {
-      setSyncNotification(`❌ Sync error: ${error.response?.data?.error || error.message}`);
-      setTimeout(() => setSyncNotification(null), 5000);
-    }
-  };
-
-  const autoSyncAllPipelines = async () => {
-    try {
-      // Auto-sync first 5 pipelines to avoid overwhelming
-      const pipelinesToSync = currentPipelines.slice(0, 5);
-      
-      for (const pipeline of pipelinesToSync) {
-        try {
-          await axios.get(getApiUrl(`/api/pipelines/${pipeline.name}/sync`));
-        } catch (error) {
-          // Silently continue with other pipelines
-          console.log(`Auto-sync failed for ${pipeline.name}:`, error);
-        }
-      }
-      
-      // Refresh list after auto-sync
-      fetchPipelines();
-    } catch (error) {
-      console.log('Auto-sync error:', error);
-    }
-  };
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -422,25 +305,6 @@ const PipelineList: React.FC = () => {
         <h1>Existing Pipelines</h1>
       </div>
       
-      {/* Sync Notification */}
-      {syncNotification && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          backgroundColor: syncNotification.includes('✅') ? '#4caf50' : '#f44336',
-          color: 'white',
-          padding: '12px 24px',
-          borderRadius: '4px',
-          boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-          zIndex: 1000,
-          fontSize: '14px',
-          fontWeight: 'bold'
-        }}>
-          {syncNotification}
-        </div>
-      )}
-
       <div className="section">
         <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
           <h2>Pipeline List ({filteredPipelines.length} of {pipelines.length} pipelines)</h2>
@@ -483,53 +347,6 @@ const PipelineList: React.FC = () => {
           )}
         </div>
 
-        {/* Bulk Selection Controls */}
-        <div style={{ marginBottom: '20px', display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '4px', border: '1px solid #e9ecef' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <input
-              type="checkbox"
-              checked={selectedPipelines.size > 0 && selectedPipelines.size === currentPipelines.length}
-              onChange={toggleSelectAll}
-              style={{ transform: 'scale(1.2)' }}
-            />
-            <label style={{ fontWeight: 'bold', margin: 0 }}>
-              Select All ({selectedPipelines.size} selected)
-            </label>
-          </div>
-          
-          {selectedPipelines.size > 0 && (
-            <>
-              <button
-                onClick={() => setSelectedPipelines(new Set())}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Clear Selection
-              </button>
-              <button
-                onClick={() => setShowBulkDeleteConfirm(true)}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#dc3545',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold'
-                }}
-              >
-                Delete Selected ({selectedPipelines.size})
-              </button>
-            </>
-          )}
-        </div>
-
         {/* Pagination Info */}
         {filteredPipelines.length > itemsPerPage && (
           <div style={{ marginBottom: '15px', color: '#666', fontSize: '14px' }}>
@@ -551,17 +368,9 @@ const PipelineList: React.FC = () => {
           <>
             <div className="pipelines-grid">
               {currentPipelines.map((pipeline) => (
-              <div key={pipeline.name} className={`pipeline-card ${pipeline.lockStatus ? 'locked' : ''} ${selectedPipelines.has(pipeline.name) ? 'selected' : ''}`}>
+              <div key={pipeline.name} className={`pipeline-card ${pipeline.lockStatus ? 'locked' : ''}`}>
                 <div className="pipeline-card-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedPipelines.has(pipeline.name)}
-                      onChange={() => togglePipelineSelection(pipeline.name)}
-                      style={{ transform: 'scale(1.2)' }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <h3 style={{ margin: 0 }}>
+                  <h3>
                     {pipeline.name}
                     {pipeline.lockStatus && (
                       <span style={{ 
@@ -573,8 +382,7 @@ const PipelineList: React.FC = () => {
                         🔒 {pipeline.lockStatus.locked_by === userId ? 'Locked by you' : `Locked by ${pipeline.lockStatus.locked_by}`}
                       </span>
                     )}
-                    </h3>
-                  </div>
+                  </h3>
                   <div className="pipeline-actions">
                     {pipeline.lockStatus && pipeline.lockStatus.locked_by !== userId ? (
                       <button 
@@ -598,22 +406,6 @@ const PipelineList: React.FC = () => {
                         ✏️
                       </button>
                     )}
-                    <button 
-                      onClick={() => handleSyncFromAWS(pipeline.name)}
-                      className="sync-btn"
-                      title="Manual sync from AWS (auto-sync runs every 60s)"
-                      style={{
-                        padding: '5px 10px',
-                        fontSize: '16px',
-                        border: 'none',
-                        background: 'none',
-                        cursor: 'pointer',
-                        borderRadius: '4px',
-                        transition: 'background 0.2s'
-                      }}
-                    >
-                      🔄
-                    </button>
                     <button 
                       onClick={() => setDeleteConfirm(pipeline.name)}
                       className="delete-btn"
@@ -780,91 +572,6 @@ const PipelineList: React.FC = () => {
         )}
       </div>
 
-      {/* Bulk Delete Confirmation Modal */}
-      {showBulkDeleteConfirm && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: 'white',
-            padding: '30px',
-            borderRadius: '8px',
-            maxWidth: '600px',
-            maxHeight: '80vh',
-            overflow: 'auto',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
-          }}>
-            <h3 style={{ color: '#d32f2f', marginTop: 0 }}>
-              Confirm Bulk Deletion
-            </h3>
-            <p><strong>Are you sure you want to delete {selectedPipelines.size} pipeline(s)?</strong></p>
-            <p style={{ color: '#d32f2f', fontSize: '14px', margin: '15px 0' }}>
-              This will delete the following AWS resources for each pipeline:
-            </p>
-            
-            <div style={{ backgroundColor: '#ffebee', padding: '15px', borderRadius: '4px', marginBottom: '20px' }}>
-              <h4 style={{ margin: '0 0 10px 0', color: '#d32f2f' }}>Pipelines to be deleted:</h4>
-              <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                {Array.from(selectedPipelines).map(name => (
-                  <li key={name} style={{ color: '#d32f2f', fontWeight: 'bold' }}>{name}</li>
-                ))}
-              </ul>
-            </div>
-
-            <ul style={{ color: '#d32f2f', fontSize: '13px', margin: '15px 0', paddingLeft: '20px' }}>
-              <li>CodePipeline and all pipeline history</li>
-              <li>CodeBuild project and build logs</li>
-              <li>ECR repository including all Docker images</li>
-              <li>Manifest folders in staging repositories</li>
-              <li>Appsettings folders in configuration repositories</li>
-            </ul>
-            
-            <p style={{ color: '#ff6b00', fontSize: '12px', fontStyle: 'italic', marginBottom: '20px' }}>
-              Warning: This action cannot be undone. All resources will be permanently deleted.
-            </p>
-            
-            <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setShowBulkDeleteConfirm(false)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleBulkDelete}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#d32f2f',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold'
-                }}
-              >
-                Yes, Delete All {selectedPipelines.size} Pipelines
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <style>{`
         .pipelines-grid {
           display: grid;
@@ -884,11 +591,6 @@ const PipelineList: React.FC = () => {
 
         .pipeline-card:hover {
           box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }
-
-        .pipeline-card.selected {
-          border: 2px solid #2196f3;
-          box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
         }
 
         .pipeline-card-header {
@@ -922,10 +624,6 @@ const PipelineList: React.FC = () => {
 
         .edit-btn:hover {
           background: #e3f2fd;
-        }
-
-        .sync-btn:hover {
-          background: #e8f5e8;
         }
 
         .delete-btn:hover {

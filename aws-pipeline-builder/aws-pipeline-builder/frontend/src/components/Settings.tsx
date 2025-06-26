@@ -154,7 +154,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
 const DEFAULT_MANIFEST_TEMPLATE = `apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deployment-{{ pipeline_name }}
+  name: {{ pipeline_name }}
   namespace: {{ namespace }}
   labels:
     app.type: "{{ app_type }}"

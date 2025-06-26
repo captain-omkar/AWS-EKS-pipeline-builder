@@ -1,0 +1,83 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - yum install -y jq unzip
+      - curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.24.10/2023-01-30/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl
+      - mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$PATH:$HOME/bin
+
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - export KUBECONFIG=$HOME/.kube/config
+      - aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query 'SecretString' --output text > Database.json
+
+  build:
+    commands:
+      - echo Build started on `date`
+      - IMAGE_TAG=$(echo $CODEBUILD_BUILD_ID | awk -F":" '{print $2}')
+      - TARGET_DIR=${DOCKER_REPO_DIR:-.}
+      - echo "✅ Using SERVICE_NAME=$SERVICE_NAME"
+      - echo "✅ Using TARGET_DIR=$TARGET_DIR"
+
+      - echo "✅ Cloning appsettings repo..."
+      - CREDENTIALS=$(aws sts assume-role --role-arn $CLUSTER_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)
+      - export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+      - export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+      - export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+      - git config --global credential.helper '!aws codecommit credential-helper $@'
+      - git config --global credential.UseHttpPath true
+      - git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO
+      - cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/
+
+      #- echo "✅ Downloading appsettings.json from S3..."
+      #- aws s3 ls s3://eks-manifest-loco/appsettings/$SERVICE_NAME/
+      #- aws s3 cp s3://eks-manifest-loco/appsettings/$SERVICE_NAME/appsettings.json $TARGET_DIR/
+      - ls -R $TARGET_DIR
+
+      - echo "✅ Replacing placeholders dynamically..."
+      - |
+        for key in $(jq -r 'keys[]' Database.json); do
+          value=$(jq -r --arg k "$key" '.[$k]' Database.json)
+          echo "Replacing $key with $value"
+          sed -i "s|$key|$value|g" $TARGET_DIR/appsettings.json
+        done
+
+      - echo "✅ Final appsettings.json:"
+      - cat $TARGET_DIR/appsettings.json
+
+      - echo "✅ Building Docker image..."
+      - docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .
+      - docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $ECR_REPO_URI:$IMAGE_TAG
+
+      - echo Writing image definitions file...
+      - echo "$Repository_Name-$Branch_Name"
+
+      - echo "✅ Assume role for kubectl..."
+      
+      - git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO
+      - cd $MANIFEST_REPO/$SERVICE_NAME/
+
+      - ls
+      - aws eks update-kubeconfig --name $CLUSTER_NAME
+      - sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml
+      
+      - echo "✅ Applying manifests..."
+      - cat $SERVICE_NAME.yml
+      - if [ -f "${SERVICE_NAME}-hpa.yml" ]; then cat "${SERVICE_NAME}-hpa.yml"; fi
+      - if [ -f "${SERVICE_NAME}-kafka.yml" ]; then cat "${SERVICE_NAME}-kafka.yml"; fi
+      
+      - kubectl apply -f $SERVICE_NAME.yml
+      - if [ -f "${SERVICE_NAME}-hpa.yml" ]; then kubectl apply -f "${SERVICE_NAME}-hpa.yml"; fi
+      - if [ -f "${SERVICE_NAME}-kafka.yml" ]; then kubectl apply -f "${SERVICE_NAME}-kafka.yml"; fi
+

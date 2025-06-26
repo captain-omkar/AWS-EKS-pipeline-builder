@@ -330,13 +330,38 @@ const PipelineForm: React.FC = () => {
   }, [isEditMode, editPipeline?.name]); // Simplified dependencies
 
   /**
-   * EFFECT: Cleanup lock on component unmount
-   * -----------------------------------------
-   * Ensures lock is released when user navigates away
+   * EFFECT: Cleanup lock on component unmount and browser close
+   * ---------------------------------------------------------
+   * Ensures lock is released when user navigates away or closes browser
    */
   useEffect(() => {
+    // Handle browser close/refresh events
+    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+      if (isEditMode && editPipeline) {
+        console.log('🔓 Browser closing, releasing lock for:', editPipeline.name);
+        try {
+          // Try async first
+          await axios.delete(getApiUrl(`/api/pipelines/${editPipeline.name}/lock`), {
+            data: { userId }
+          });
+        } catch (error) {
+          // Fallback to beacon for unreliable network
+          navigator.sendBeacon(
+            getApiUrl(`/api/pipelines/${editPipeline.name}/lock-beacon`),
+            JSON.stringify({ userId })
+          );
+        }
+      }
+    };
+
+    // Add event listener for browser close
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
     // Cleanup on unmount
     return () => {
+      // Remove event listener
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      
       if (isEditMode && editPipeline) {
         console.log('🔓 Component unmounting, releasing lock for:', editPipeline.name);
         releaseLock(editPipeline.name);
@@ -345,7 +370,7 @@ const PipelineForm: React.FC = () => {
         }
       }
     };
-  }, []); // Only run on mount/unmount
+  }, [isEditMode, editPipeline?.name, userId]); // Include dependencies for beforeunload
 
   /**
    * EFFECT 3: Debounced Pipeline Name Validation
@@ -570,7 +595,6 @@ const PipelineForm: React.FC = () => {
    * 
    * CREATE MODE:
    * -----------
-   * - Validates mandatory environment variables (MANIFEST_REPO, APPSETTINGS_REPO)
    * - Sends multiple pipelines to POST /api/pipelines
    * - Creates all AWS resources (CodePipeline, CodeBuild, ECR, S3)
    * - Uploads appsettings and manifests to CodeCommit
@@ -594,30 +618,6 @@ const PipelineForm: React.FC = () => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-
-    // Validate mandatory environment variables for CREATE mode
-    if (!isEditMode) {
-      const validationErrors: string[] = [];
-      
-      pipelines.forEach((pipeline, index) => {
-        const manifestRepo = pipeline.environmentVariables.find(env => env.name === 'MANIFEST_REPO');
-        const appsettingsRepo = pipeline.environmentVariables.find(env => env.name === 'APPSETTINGS_REPO');
-        
-        if (!manifestRepo || !manifestRepo.value.trim()) {
-          validationErrors.push(`Pipeline ${index + 1}: MANIFEST_REPO is required`);
-        }
-        
-        if (!appsettingsRepo || !appsettingsRepo.value.trim()) {
-          validationErrors.push(`Pipeline ${index + 1}: APPSETTINGS_REPO is required`);
-        }
-      });
-      
-      if (validationErrors.length > 0) {
-        setMessage(`Validation Error: Please provide the following mandatory environment variables:\n${validationErrors.join('\n')}`);
-        setLoading(false);
-        return;
-      }
-    }
 
     try {
       const pipelineData = pipelines.map(p => ({ 
@@ -662,8 +662,8 @@ const PipelineForm: React.FC = () => {
         });
       }
 
-      if (isEditMode) {
-        if (response.data.success) {
+      if (response.data.success) {
+        if (isEditMode) {
           setMessage(`Successfully updated pipeline: ${pipelines[0].pipelineName}`);
           // Release the lock after successful update
           await releaseLock(pipelines[0].pipelineName);
@@ -676,128 +676,54 @@ const PipelineForm: React.FC = () => {
             navigate('/pipelines');
           }, 2000);
         } else {
-          setMessage(`Error: ${response.data.error}`);
-        }
-      } else {
-        // CREATE MODE: Handle response and attempt metadata saving for successful pipelines
-        
-        // Check if we got a valid response with pipelines array
-        if (!response.data.pipelines || !Array.isArray(response.data.pipelines)) {
-          // Complete failure - no pipelines array returned
-          setMessage(`Error: ${response.data.error || 'Failed to create pipelines - no pipeline data returned'}`);
-          setLoading(false);
-          return;
-        }
-        
-        // Additional check: if backend sent complete failure with no successful pipelines
-        const hasAnySuccess = response.data.pipelines.some((p: any) => p.status === "created");
-        if (!hasAnySuccess && response.data.error) {
-          // All pipelines failed, show the backend error message
-          setMessage(`Pipeline Creation Failed: ${response.data.error || response.data.message}`);
-          setLoading(false);
-          return;
-        }
-        
-        const metadataSaveResults: Array<{pipelineName: string, success: boolean, error?: string}> = [];
-        
-        // Save metadata for each successfully created pipeline
-        for (let i = 0; i < pipelines.length; i++) {
-          const pipeline = pipelines[i];
-          const createdPipeline = response.data.pipelines[i];
-          
-          if (createdPipeline && createdPipeline.status === "created") {
-            try {
-              await axios.post(getApiUrl('/api/pipeline-metadata'), {
-                pipeline: {
-                  name: pipeline.pipelineName,
-                  repositoryName: pipeline.repositoryName,
-                  branchName: pipeline.branchName,
-                  buildspecPath: pipeline.buildspecPath,
-                  useBuildspecFile: pipeline.useBuildspecFile,
-                  computeType: pipeline.computeType,
-                  environmentVariables: pipeline.environmentVariables,
-                  deploymentConfig: pipeline.deploymentConfig,
-                  scalingConfig: pipeline.scalingConfig,
-                  pipelineArn: createdPipeline.pipelineArn,
-                  resources: {
-                    pipeline: createdPipeline.pipelineName,
-                    codebuild: `${createdPipeline.pipelineName}-build`,
-                    ecrRepository: pipeline.pipelineName,
-                    appsettingsRepo: pipeline.environmentVariables.find(e => e.name === 'APPSETTINGS_REPO')?.value,
-                    manifestRepo: pipeline.environmentVariables.find(e => e.name === 'MANIFEST_REPO')?.value
+          // Save metadata for each created pipeline
+          for (let i = 0; i < pipelines.length; i++) {
+            const pipeline = pipelines[i];
+            const createdPipeline = response.data.pipelines[i];
+            
+            if (createdPipeline && createdPipeline.success !== false) {
+              try {
+                await axios.post(getApiUrl('/api/pipeline-metadata'), {
+                  pipeline: {
+                    name: pipeline.pipelineName,
+                    repositoryName: pipeline.repositoryName,
+                    branchName: pipeline.branchName,
+                    buildspecPath: pipeline.buildspecPath,
+                    useBuildspecFile: pipeline.useBuildspecFile,
+                    computeType: pipeline.computeType,
+                    environmentVariables: pipeline.environmentVariables,
+                    deploymentConfig: pipeline.deploymentConfig,
+                    scalingConfig: pipeline.scalingConfig,
+                    pipelineArn: createdPipeline.pipelineArn,
+                    resources: {
+                      pipeline: createdPipeline.pipelineName,
+                      codebuild: `${createdPipeline.pipelineName}-build`,
+                      ecrRepository: pipeline.pipelineName,
+                      appsettingsRepo: pipeline.environmentVariables.find(e => e.name === 'APPSETTINGS_REPO')?.value,
+                      manifestRepo: pipeline.environmentVariables.find(e => e.name === 'MANIFEST_REPO')?.value
+                    }
                   }
-                }
-              });
-              metadataSaveResults.push({pipelineName: pipeline.pipelineName, success: true});
-              console.log(`✅ Metadata saved for pipeline: ${pipeline.pipelineName}`);
-            } catch (metadataError: any) {
-              metadataSaveResults.push({
-                pipelineName: pipeline.pipelineName, 
-                success: false, 
-                error: metadataError.response?.data?.error || metadataError.message
-              });
-              console.error(`❌ Failed to save metadata for pipeline ${pipeline.pipelineName}:`, metadataError);
+                });
+              } catch (metadataError) {
+                console.error('Failed to save pipeline metadata:', metadataError);
+              }
             }
           }
-        }
-        
-        // Generate comprehensive status message
-        const successfulPipelines = response.data.pipelines.filter((p: any) => p.status === "created");
-        const failedPipelines = response.data.pipelines.filter((p: any) => p.status === "error");
-        const successfulMetadata = metadataSaveResults.filter(r => r.success);
-        const failedMetadata = metadataSaveResults.filter(r => !r.success);
-        
-        let message = '';
-        
-        // Check if ALL pipelines failed
-        if (successfulPipelines.length === 0) {
-          message = `❌ Pipeline Creation Failed: All ${failedPipelines.length} pipeline(s) failed to create:\n`;
-          failedPipelines.forEach((p: any) => {
-            const errorMsg = p.error?.creation_error || p.error || 'Unknown error';
-            message += `  • ${p.pipelineName}: ${errorMsg}\n`;
-          });
-          message += '\nNo AWS resources were created.';
-        } else {
-          // Some or all pipelines succeeded
           
-          // AWS Creation Results
+          const successfulPipelines = response.data.pipelines.filter((p: any) => p.success !== false);
+          const failedPipelines = response.data.pipelines.filter((p: any) => p.success === false);
+          
+          let message = '';
           if (successfulPipelines.length > 0) {
-            message += `✅ AWS Resources Created: ${successfulPipelines.map((p: any) => p.pipelineName || p.name).join(', ')}\n`;
+            message += `Successfully created ${successfulPipelines.length} pipeline(s): ${successfulPipelines.map((p: any) => p.pipelineName || p.name).join(', ')}. `;
           }
           if (failedPipelines.length > 0) {
-            message += `❌ AWS Creation Failed: `;
+            message += `Failed to create ${failedPipelines.length} pipeline(s): `;
             failedPipelines.forEach((p: any) => {
-              const errorMsg = p.error?.creation_error || p.error || 'Unknown error';
-              message += `\n  • ${p.pipelineName}: ${errorMsg}`;
+              message += `\n${p.name}: ${p.error}`;
             });
-            message += '\n';
           }
-          
-          // Metadata Save Results
-          if (successfulMetadata.length > 0) {
-            message += `💾 Metadata Saved: ${successfulMetadata.map(r => r.pipelineName).join(', ')}\n`;
-          }
-          if (failedMetadata.length > 0) {
-            message += `⚠️ Metadata Save Failed: `;
-            failedMetadata.forEach((r) => {
-              message += `\n  • ${r.pipelineName}: ${r.error}`;
-            });
-            message += '\n';
-          }
-          
-          // Final Summary
-          if (successfulMetadata.length > 0) {
-            message += `\n🎉 ${successfulMetadata.length} pipeline(s) fully created and available in pipeline list.`;
-          }
-          if (failedMetadata.length > 0) {
-            message += `\n⚠️ ${failedMetadata.length} pipeline(s) created in AWS but not visible in list - metadata save failed.`;
-          }
-        }
-        
-        setMessage(message);
-        
-        // Reset form only if at least one pipeline was successfully created
-        if (successfulPipelines.length > 0) {
+          setMessage(message);
           setPipelines([{
             pipelineName: '',
             repositoryName: '',
@@ -806,135 +732,16 @@ const PipelineForm: React.FC = () => {
             useBuildspecFile: false,
             buildspec: defaultBuildspec,
             computeType: 'BUILD_GENERAL1_SMALL',
-            environmentVariables: [
-              { name: 'MANIFEST_REPO', value: '' },
-              { name: 'APPSETTINGS_REPO', value: '' }
-            ],
+            environmentVariables: [],
             appsettingsFile: undefined,
             appsettingsContent: undefined
           }]);
         }
+      } else {
+        setMessage(`Error: ${response.data.error}`);
       }
     } catch (error: any) {
-      console.error('Pipeline creation error:', error);
-      
-      // Handle different types of HTTP error responses
-      if (error.response) {
-        const status = error.response.status;
-        const data = error.response.data;
-        
-        // Handle partial success (HTTP 207) or complete failure (HTTP 500)
-        if ((status === 207 || status === 500) && data.pipelines && Array.isArray(data.pipelines)) {
-          // Backend returned pipeline details even for errors - process them
-          const successfulPipelines = data.pipelines.filter((p: any) => p.status === "created");
-          const failedPipelines = data.pipelines.filter((p: any) => p.status === "error");
-          
-          // Attempt to save metadata for successful pipelines even when some failed
-          const metadataSaveResults: Array<{pipelineName: string, success: boolean, error?: string}> = [];
-          
-          for (let i = 0; i < data.pipelines.length; i++) {
-            const createdPipeline = data.pipelines[i];
-            const originalPipeline = pipelines[i];
-            
-            if (createdPipeline && createdPipeline.status === "created" && originalPipeline) {
-              try {
-                await axios.post(getApiUrl('/api/pipeline-metadata'), {
-                  pipeline: {
-                    name: originalPipeline.pipelineName,
-                    repositoryName: originalPipeline.repositoryName,
-                    branchName: originalPipeline.branchName,
-                    buildspecPath: originalPipeline.buildspecPath,
-                    useBuildspecFile: originalPipeline.useBuildspecFile,
-                    computeType: originalPipeline.computeType,
-                    environmentVariables: originalPipeline.environmentVariables,
-                    deploymentConfig: originalPipeline.deploymentConfig,
-                    scalingConfig: originalPipeline.scalingConfig,
-                    pipelineArn: createdPipeline.pipelineArn,
-                    resources: {
-                      pipeline: createdPipeline.pipelineName,
-                      codebuild: `${createdPipeline.pipelineName}-build`,
-                      ecrRepository: originalPipeline.pipelineName,
-                      appsettingsRepo: originalPipeline.environmentVariables.find(e => e.name === 'APPSETTINGS_REPO')?.value,
-                      manifestRepo: originalPipeline.environmentVariables.find(e => e.name === 'MANIFEST_REPO')?.value
-                    }
-                  }
-                });
-                metadataSaveResults.push({pipelineName: originalPipeline.pipelineName, success: true});
-                console.log(`✅ Metadata saved for successful pipeline: ${originalPipeline.pipelineName}`);
-              } catch (metadataError: any) {
-                metadataSaveResults.push({
-                  pipelineName: originalPipeline.pipelineName, 
-                  success: false, 
-                  error: metadataError.response?.data?.error || metadataError.message
-                });
-                console.error(`❌ Failed to save metadata for pipeline ${originalPipeline.pipelineName}:`, metadataError);
-              }
-            }
-          }
-          
-          // Generate comprehensive message
-          let message = '';
-          
-          // Failed pipelines
-          if (failedPipelines.length > 0) {
-            message = `❌ Pipeline Creation Failed (${failedPipelines.length}/${pipelines.length}):\n`;
-            failedPipelines.forEach((p: any) => {
-              const errorMsg = p.error?.creation_error || p.error || 'Unknown error';
-              message += `  • ${p.pipelineName}: ${errorMsg}\n`;
-            });
-          }
-          
-          // Successful pipelines
-          if (successfulPipelines.length > 0) {
-            message += `\n✅ AWS Resources Created (${successfulPipelines.length}/${pipelines.length}): ${successfulPipelines.map((p: any) => p.pipelineName || p.name).join(', ')}\n`;
-            
-            // Metadata save results
-            const successfulMetadata = metadataSaveResults.filter(r => r.success);
-            const failedMetadata = metadataSaveResults.filter(r => !r.success);
-            
-            if (successfulMetadata.length > 0) {
-              message += `💾 Metadata Saved: ${successfulMetadata.map(r => r.pipelineName).join(', ')}\n`;
-              message += `🎉 ${successfulMetadata.length} pipeline(s) fully created and available in pipeline list.\n`;
-            }
-            
-            if (failedMetadata.length > 0) {
-              message += `⚠️ Metadata Save Failed: `;
-              failedMetadata.forEach((r) => {
-                message += `\n  • ${r.pipelineName}: ${r.error}`;
-              });
-              message += `\n⚠️ ${failedMetadata.length} pipeline(s) created in AWS but not visible in list.\n`;
-            }
-          }
-          
-          setMessage(message);
-          
-          // Reset form if any pipelines were successfully created and had metadata saved
-          const successfulMetadata = metadataSaveResults.filter(r => r.success);
-          if (successfulMetadata.length > 0) {
-            setPipelines([{
-              pipelineName: '',
-              repositoryName: '',
-              branchName: '',
-              buildspecPath: 'buildspec.yml',
-              useBuildspecFile: false,
-              buildspec: defaultBuildspec,
-              computeType: 'BUILD_GENERAL1_SMALL',
-              environmentVariables: [
-                { name: 'MANIFEST_REPO', value: '' },
-                { name: 'APPSETTINGS_REPO', value: '' }
-              ],
-              appsettingsFile: undefined,
-              appsettingsContent: undefined
-            }]);
-          }
-        } else {
-          // Regular error response
-          setMessage(`Error: ${data.error || data.message || 'Pipeline creation failed'}`);
-        }
-      } else {
-        // Network or other error
-        setMessage(`Error: ${error.message || 'Network error during pipeline creation'}`);
-      }
+      setMessage(`Error: ${error.response?.data?.error || error.message}`);
     } finally {
       setLoading(false);
     }
@@ -1267,62 +1074,26 @@ const PipelineForm: React.FC = () => {
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   Environment Variables {expandedEnvVars.includes(pIndex) ? '▼' : '▶'}
-                  {!isEditMode && (
-                    <span style={{ color: '#f44336', fontSize: '0.8em', marginLeft: '10px' }}>
-                      * MANIFEST_REPO and APPSETTINGS_REPO are required
-                    </span>
-                  )}
                 </h4>
                 {expandedEnvVars.includes(pIndex) && (
                   <>
                     {pipeline.environmentVariables.map((envVar, vIndex) => (
                       <div key={vIndex} className="env-var">
-                        <div style={{ position: 'relative' }}>
-                          <input
-                            type="text"
-                            placeholder="Name"
-                            value={envVar.name}
-                            onChange={(e) => updateEnvironmentVariable(pIndex, vIndex, 'name', e.target.value)}
-                            readOnly={['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name)}
-                            style={['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name) ? 
-                              { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {}}
-                          />
-                          {['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name) && !isEditMode && (
-                            <span style={{ 
-                              position: 'absolute', 
-                              right: '5px', 
-                              top: '50%', 
-                              transform: 'translateY(-50%)', 
-                              color: '#f44336', 
-                              fontSize: '0.8em',
-                              fontWeight: 'bold'
-                            }}>
-                              *
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ position: 'relative' }}>
-                          <EnvVarInput
-                            name={envVar.name}
-                            value={envVar.value}
-                            onChange={(value) => updateEnvironmentVariable(pIndex, vIndex, 'value', value)}
-                            placeholder={['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name) ? 
-                              "Value (Required)" : "Value"}
-                          />
-                          {['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name) && !isEditMode && (
-                            <span style={{ 
-                              position: 'absolute', 
-                              right: '5px', 
-                              top: '50%', 
-                              transform: 'translateY(-50%)', 
-                              color: '#f44336', 
-                              fontSize: '0.8em',
-                              fontWeight: 'bold'
-                            }}>
-                              *
-                            </span>
-                          )}
-                        </div>
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={envVar.name}
+                          onChange={(e) => updateEnvironmentVariable(pIndex, vIndex, 'name', e.target.value)}
+                          readOnly={['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name)}
+                          style={['MANIFEST_REPO', 'APPSETTINGS_REPO'].includes(envVar.name) ? 
+                            { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {}}
+                        />
+                        <EnvVarInput
+                          name={envVar.name}
+                          value={envVar.value}
+                          onChange={(value) => updateEnvironmentVariable(pIndex, vIndex, 'value', value)}
+                          placeholder="Value"
+                        />
                         <button 
                           type="button" 
                           onClick={() => removeEnvironmentVariable(pIndex, vIndex)}

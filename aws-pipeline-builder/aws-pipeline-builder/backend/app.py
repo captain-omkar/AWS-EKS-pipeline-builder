@@ -201,7 +201,7 @@ def load_manifest_template():
             return """apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deployment-{{ pipeline_name }}
+  name: {{ pipeline_name }}
   namespace: {{ namespace }}
   labels:
     app.type: "{{ app_type }}"
@@ -1921,151 +1921,6 @@ def delete_pipeline_metadata(pipeline_name):
             'error': str(e)
         }), 500
 
-# AWS Resource Update Functions
-def update_codebuild_environment_variables(pipeline_name, environment_variables):
-    """Update CodeBuild project environment variables in AWS"""
-    try:
-        codebuild_project_name = f"{pipeline_name}-build"
-        
-        # Get current project configuration
-        codebuild = session.client('codebuild')
-        response = codebuild.batch_get_projects(names=[codebuild_project_name])
-        
-        if not response['projects']:
-            raise Exception(f"CodeBuild project {codebuild_project_name} not found")
-        
-        project = response['projects'][0]
-        
-        # Convert environment variables to CodeBuild format
-        codebuild_env_vars = []
-        for env_var in environment_variables:
-            if env_var.get('name') and env_var.get('value'):
-                codebuild_env_vars.append({
-                    'name': env_var['name'],
-                    'value': env_var['value'],
-                    'type': 'PLAINTEXT'
-                })
-        
-        # Add required environment variables if not present
-        required_vars = {
-            'SERVICE_NAME': pipeline_name,
-            'ECR_REPO_URI': f"{project['environment']['environmentVariables'][0]['value'] if project['environment']['environmentVariables'] else '465105616690.dkr.ecr.ap-south-1.amazonaws.com'}/${pipeline_name}"
-        }
-        
-        existing_var_names = {var['name'] for var in codebuild_env_vars}
-        for name, value in required_vars.items():
-            if name not in existing_var_names:
-                codebuild_env_vars.append({
-                    'name': name,
-                    'value': value,
-                    'type': 'PLAINTEXT'
-                })
-        
-        # Update the project
-        update_params = {
-            'name': codebuild_project_name,
-            'environment': {
-                **project['environment'],
-                'environmentVariables': codebuild_env_vars
-            }
-        }
-        
-        # Remove read-only fields
-        for field in ['arn', 'created', 'lastModified', 'webhook']:
-            update_params.pop(field, None)
-            if 'environment' in update_params:
-                update_params['environment'].pop(field, None)
-        
-        response = codebuild.update_project(**update_params)
-        print(f"✅ Updated CodeBuild environment variables for {codebuild_project_name}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to update CodeBuild environment variables: {str(e)}")
-        raise
-
-def update_codepipeline_source_branch(pipeline_name, branch_name):
-    """Update CodePipeline source branch in AWS"""
-    try:
-        codepipeline = session.client('codepipeline')
-        
-        # Get current pipeline configuration
-        response = codepipeline.get_pipeline(name=pipeline_name)
-        pipeline_definition = response['pipeline']
-        
-        # Find and update the source action
-        for stage in pipeline_definition['stages']:
-            if stage['name'] == 'Source':
-                for action in stage['actions']:
-                    if action['actionTypeId']['provider'] in ['CodeStarSourceConnection', 'GitHub']:
-                        # Update branch reference
-                        if 'configuration' in action:
-                            if 'BranchName' in action['configuration']:
-                                action['configuration']['BranchName'] = branch_name
-                            elif 'Branch' in action['configuration']:
-                                action['configuration']['Branch'] = branch_name
-                        break
-                break
-        
-        # Remove read-only fields
-        if 'metadata' in pipeline_definition:
-            del pipeline_definition['metadata']
-        
-        # Update the pipeline
-        codepipeline.update_pipeline(pipeline=pipeline_definition)
-        print(f"✅ Updated CodePipeline source branch to {branch_name} for {pipeline_name}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to update CodePipeline source branch: {str(e)}")
-        raise
-
-def fetch_live_pipeline_config(pipeline_name):
-    """Fetch current configuration from AWS CodePipeline and CodeBuild"""
-    try:
-        config = {}
-        
-        # Get CodePipeline configuration
-        codepipeline = session.client('codepipeline')
-        pipeline_response = codepipeline.get_pipeline(name=pipeline_name)
-        pipeline = pipeline_response['pipeline']
-        
-        # Extract branch from source stage
-        for stage in pipeline['stages']:
-            if stage['name'] == 'Source':
-                for action in stage['actions']:
-                    if action['actionTypeId']['provider'] in ['CodeStarSourceConnection', 'GitHub']:
-                        branch_config = action.get('configuration', {})
-                        config['branchName'] = branch_config.get('BranchName') or branch_config.get('Branch')
-                        config['repositoryName'] = branch_config.get('FullRepositoryId') or branch_config.get('Owner') + '/' + branch_config.get('Repo', '')
-                        break
-                break
-        
-        # Get CodeBuild configuration
-        codebuild = session.client('codebuild')
-        codebuild_project_name = f"{pipeline_name}-build"
-        build_response = codebuild.batch_get_projects(names=[codebuild_project_name])
-        
-        if build_response['projects']:
-            project = build_response['projects'][0]
-            config['computeType'] = project['environment']['computeType']
-            
-            # Extract environment variables
-            env_vars = []
-            for env_var in project['environment'].get('environmentVariables', []):
-                if env_var['name'] not in ['SERVICE_NAME', 'ECR_REPO_URI']:  # Skip auto-generated vars
-                    env_vars.append({
-                        'name': env_var['name'],
-                        'value': env_var['value']
-                    })
-            config['environmentVariables'] = env_vars
-        
-        return config
-        
-    except Exception as e:
-        print(f"❌ Failed to fetch live pipeline config: {str(e)}")
-        return {}
-
 # Pipeline operations (appsettings fetch, locking, etc.)
 @app.route('/api/pipelines/<pipeline_name>/update', methods=['POST'])
 def update_pipeline(pipeline_name):
@@ -2183,37 +2038,6 @@ def update_pipeline(pipeline_name):
                 
         except Exception as e:
             print(f"⚠️ Failed to update pipeline metadata: {str(e)}")
-        
-        # UPDATE AWS RESOURCES - Sync changes to CodePipeline and CodeBuild
-        try:
-            aws_updates_success = []
-            aws_updates_errors = []
-            
-            # 1. Update CodeBuild project environment variables
-            if pipeline_config.get('environmentVariables'):
-                try:
-                    update_codebuild_environment_variables(pipeline_name, pipeline_config.get('environmentVariables', []))
-                    aws_updates_success.append("CodeBuild environment variables")
-                except Exception as e:
-                    aws_updates_errors.append(f"CodeBuild env vars: {str(e)}")
-            
-            # 2. Update CodePipeline source branch if changed
-            current_branch = pipeline_config.get('branchName')
-            if current_branch:
-                try:
-                    update_codepipeline_source_branch(pipeline_name, current_branch)
-                    aws_updates_success.append("CodePipeline source branch")
-                except Exception as e:
-                    aws_updates_errors.append(f"CodePipeline branch: {str(e)}")
-            
-            # Log results
-            if aws_updates_success:
-                print(f"✅ Successfully updated AWS resources: {', '.join(aws_updates_success)}")
-            if aws_updates_errors:
-                print(f"⚠️ AWS update errors: {'; '.join(aws_updates_errors)}")
-                
-        except Exception as e:
-            print(f"⚠️ Failed to update AWS resources: {str(e)}")
         
         return jsonify({
             'success': True,
@@ -2677,85 +2501,6 @@ def get_pipeline_manifest(pipeline_name):
                 'success': False,
                 'error': f'Repository {manifest_repo} does not exist'
             }), 404
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/pipelines/<pipeline_name>/sync', methods=['GET'])
-def sync_pipeline_from_aws(pipeline_name):
-    """Sync pipeline configuration from live AWS resources"""
-    try:
-        # Fetch live configuration from AWS
-        live_config = fetch_live_pipeline_config(pipeline_name)
-        
-        if not live_config:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline not found in AWS or failed to fetch configuration'
-            }), 404
-        
-        # Update stored metadata with live configuration
-        metadata = load_pipeline_metadata()
-        pipelines = metadata.get('pipelines', [])
-        
-        # Find and update the pipeline metadata
-        pipeline_updated = False
-        for i, p in enumerate(pipelines):
-            if p.get('name') == pipeline_name:
-                # Merge live config with existing metadata
-                pipelines[i].update({
-                    'branchName': live_config.get('branchName', p.get('branchName')),
-                    'repositoryName': live_config.get('repositoryName', p.get('repositoryName')),
-                    'computeType': live_config.get('computeType', p.get('computeType')),
-                    'environmentVariables': live_config.get('environmentVariables', p.get('environmentVariables', [])),
-                    'lastSyncedFromAWS': datetime.now().isoformat(),
-                    'lastUpdated': datetime.now().isoformat()
-                })
-                pipeline_updated = True
-                break
-        
-        if pipeline_updated:
-            metadata['pipelines'] = pipelines
-            save_pipeline_metadata(metadata)
-            
-            return jsonify({
-                'success': True,
-                'message': f'Pipeline {pipeline_name} synced from AWS',
-                'liveConfig': live_config
-            })
-        else:
-            # Pipeline exists in AWS but not in metadata - create new metadata entry
-            new_pipeline_metadata = {
-                'name': pipeline_name,
-                'branchName': live_config.get('branchName', 'main'),
-                'repositoryName': live_config.get('repositoryName', ''),
-                'buildspecPath': 'buildspec.yml',
-                'useBuildspecFile': False,
-                'computeType': live_config.get('computeType', 'BUILD_GENERAL1_SMALL'),
-                'environmentVariables': live_config.get('environmentVariables', []),
-                'pipelineArn': live_config.get('pipelineArn'),
-                'resources': {
-                    'pipeline': pipeline_name,
-                    'codebuild': f"{pipeline_name}-build",
-                    'ecrRepository': pipeline_name
-                },
-                'createdAt': datetime.now().isoformat(),
-                'lastUpdated': datetime.now().isoformat(),
-                'lastSyncedFromAWS': datetime.now().isoformat()
-            }
-            
-            pipelines.append(new_pipeline_metadata)
-            metadata['pipelines'] = pipelines
-            save_pipeline_metadata(metadata)
-            
-            return jsonify({
-                'success': True,
-                'message': f'Pipeline {pipeline_name} imported from AWS and synced',
-                'liveConfig': live_config
-            })
             
     except Exception as e:
         return jsonify({
