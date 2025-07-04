@@ -1,2 +1,0 @@
-# DynamoDB Local Data Directory
-This directory is used to persist DynamoDB data between container restarts.

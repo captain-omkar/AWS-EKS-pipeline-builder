@@ -339,6 +339,13 @@ Troubleshooting:
 - If deletion fails, check AWS permissions for ECR, CodeCommit, and S3
 - If environment variables don't populate, verify env_suggestions.json exists
 
+July 4, 2025 - Repository Cleanup:
+----------------------------------
+- Removed duplicate nested aws-pipeline-builder directory
+- Confirmed first directory contains the complete working code with AWS integration
+- Repository structure now properly organized with single aws-pipeline-builder directory
+- All Docker Compose operations should use: /aws-pipeline-builder/docker-compose.yml
+
 Current Status: FULLY FUNCTIONAL & PRODUCTION READY
 ==================================================
 The application is now stable and ready for production use with complete
