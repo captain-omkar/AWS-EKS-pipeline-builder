@@ -3,6 +3,8 @@ from flask_cors import CORS
 import boto3
 import json
 import os
+import re
+import time
 from datetime import datetime
 from collections import OrderedDict
 from dynamodb_storage import DynamoDBStorage
@@ -218,7 +220,7 @@ spec:
         service.name: "{{ pipeline_name }}"
         product: "{{ product }}"
     spec:
-      serviceAccountName: appmesh-comp
+      serviceAccountName: {{ service_account }}
       containers:
       - name: {{ pipeline_name }}
         image: {{ image }}
@@ -395,6 +397,16 @@ spec:
         node_affinity_section = ""
     
     deployment_manifest = deployment_manifest.replace('{{ node_affinity_section }}', node_affinity_section)
+    
+    # Handle service account based on useServiceAccount flag
+    if deployment_config.get('useServiceAccount', False):
+        # Replace with the specified service account name
+        service_account_name = deployment_config.get('serviceAccountName', 'appmesh-comp')
+        deployment_manifest = deployment_manifest.replace('{{ service_account }}', service_account_name)
+    else:
+        # Remove the entire serviceAccountName line when not using service account
+        # The line still has the template variable {{ service_account }} at this point
+        deployment_manifest = re.sub(r'^\s*serviceAccountName:\s*\{\{\s*service_account\s*\}\}.*\n?', '', deployment_manifest, flags=re.MULTILINE)
     
     # Replace template variables in service template
     service_manifest = service_template.replace('{{ pipeline_name }}', service_name)
@@ -2435,15 +2447,35 @@ def delete_pipeline_resources(pipeline_name):
                         continue
                 
                 if files_to_delete:
-                    # Delete all found files
-                    codecommit.create_commit(
-                        repositoryName=manifest_repo,
-                        branchName=branch_name,
-                        parentCommitId=parent_commit_id,
-                        deleteFiles=files_to_delete,
-                        commitMessage=f"Delete manifest folder for {pipeline_name}"
-                    )
-                    successes.append(f"✅ Deleted manifest folder: {manifest_repo}/{pipeline_name}/ ({deleted_count} files)")
+                    # Delete all found files with retry logic
+                    max_retries = 3
+                    retry_count = 0
+                    
+                    while retry_count < max_retries:
+                        try:
+                            # Get fresh commit ID before each attempt
+                            if retry_count > 0:
+                                branch_info = codecommit.get_branch(repositoryName=manifest_repo, branchName=branch_name)
+                                parent_commit_id = branch_info['branch']['commitId']
+                                print(f"Retry {retry_count}: Got fresh commit ID {parent_commit_id}")
+                            
+                            codecommit.create_commit(
+                                repositoryName=manifest_repo,
+                                branchName=branch_name,
+                                parentCommitId=parent_commit_id,
+                                deleteFiles=files_to_delete,
+                                commitMessage=f"Delete manifest folder for {pipeline_name}"
+                            )
+                            successes.append(f"✅ Deleted manifest folder: {manifest_repo}/{pipeline_name}/ ({deleted_count} files)")
+                            break  # Success, exit retry loop
+                            
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= max_retries:
+                                errors.append(f"❌ Failed to delete manifest folder after {max_retries} attempts: {str(e)}")
+                            else:
+                                print(f"Retry {retry_count} for deleting manifest folder: {str(e)}")
+                                time.sleep(0.5)  # Brief pause before retry
                 else:
                     errors.append(f"⚠️ No manifest files found for pipeline: {pipeline_name}")
                         
@@ -2491,15 +2523,35 @@ def delete_pipeline_resources(pipeline_name):
                         continue
                 
                 if files_to_delete:
-                    # Delete all found files
-                    codecommit.create_commit(
-                        repositoryName=appsettings_repo,
-                        branchName=branch_name,
-                        parentCommitId=parent_commit_id,
-                        deleteFiles=files_to_delete,
-                        commitMessage=f"Delete appsettings folder for {pipeline_name}"
-                    )
-                    successes.append(f"✅ Deleted appsettings folder: {appsettings_repo}/{pipeline_name}/ ({deleted_count} files)")
+                    # Delete all found files with retry logic
+                    max_retries = 3
+                    retry_count = 0
+                    
+                    while retry_count < max_retries:
+                        try:
+                            # Get fresh commit ID before each attempt
+                            if retry_count > 0:
+                                branch_info = codecommit.get_branch(repositoryName=appsettings_repo, branchName=branch_name)
+                                parent_commit_id = branch_info['branch']['commitId']
+                                print(f"Retry {retry_count}: Got fresh commit ID for appsettings {parent_commit_id}")
+                            
+                            codecommit.create_commit(
+                                repositoryName=appsettings_repo,
+                                branchName=branch_name,
+                                parentCommitId=parent_commit_id,
+                                deleteFiles=files_to_delete,
+                                commitMessage=f"Delete appsettings folder for {pipeline_name}"
+                            )
+                            successes.append(f"✅ Deleted appsettings folder: {appsettings_repo}/{pipeline_name}/ ({deleted_count} files)")
+                            break  # Success, exit retry loop
+                            
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= max_retries:
+                                errors.append(f"❌ Failed to delete appsettings folder after {max_retries} attempts: {str(e)}")
+                            else:
+                                print(f"Retry {retry_count} for deleting appsettings folder: {str(e)}")
+                                time.sleep(0.5)  # Brief pause before retry
                 else:
                     errors.append(f"⚠️ No appsettings files found for pipeline: {pipeline_name}")
                     
@@ -3219,8 +3271,8 @@ def test_manifest():
         pipeline_name = data.get('pipelineName', 'test-pipeline')
         ecr_uri = f"465105616690.dkr.ecr.ap-south-1.amazonaws.com/{pipeline_name}"
         
-        # Default deployment config for testing
-        deployment_config = {
+        # Use deployment config from request, or default for testing
+        deployment_config = data.get('deploymentConfig', {
             'serviceName': pipeline_name,
             'namespace': 'staging-locobuzz',
             'appType': 'csharp',
@@ -3231,7 +3283,7 @@ def test_manifest():
             'cpuRequest': '150m',
             'targetPort': 80,
             'serviceType': 'ClusterIP'
-        }
+        })
         
         # Optional scaling config for testing
         scaling_config = data.get('scalingConfig')

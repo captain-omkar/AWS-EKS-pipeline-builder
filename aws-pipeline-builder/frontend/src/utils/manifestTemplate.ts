@@ -48,14 +48,18 @@ export const generateK8sManifest = async (
       }
       manifest = manifest.replace(/\{\{\s*node_affinity_section\s*\}\}/g, nodeAffinitySection);
       
-      // Handle service account conditionally
+      // Handle service account replacement
       if (config.useServiceAccount && config.serviceAccountName) {
-        // Replace the serviceAccountName line with the provided value
-        manifest = manifest.replace(/serviceAccountName: appmesh-comp/g, `serviceAccountName: ${config.serviceAccountName}`);
+        // Replace the service_account variable with the provided value
+        manifest = manifest.replace(/\{\{\s*service_account\s*\}\}/g, config.serviceAccountName);
       } else if (!config.useServiceAccount) {
         // Remove the entire serviceAccountName line while preserving indentation
         // This regex captures the line with its indentation and removes only that line
-        manifest = manifest.replace(/^(\s*)serviceAccountName: appmesh-comp\n/gm, '');
+        // Updated regex to handle cases where there might not be a trailing newline
+        manifest = manifest.replace(/^\s*serviceAccountName:\s*\{\{\s*service_account\s*\}\}.*\n?/gm, '');
+      } else {
+        // If useServiceAccount is true but no name provided, use default
+        manifest = manifest.replace(/\{\{\s*service_account\s*\}\}/g, 'default');
       }
       
       return manifest;

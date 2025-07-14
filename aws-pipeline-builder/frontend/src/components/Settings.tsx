@@ -117,12 +117,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
         'cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/',
         'ls -R $TARGET_DIR',
         'echo "✅ Replacing placeholders dynamically..."',
-        `|-
-        for key in $(jq -r 'keys[]' Database.json); do
-          value=$(jq -r --arg k "$key" '.[$k]' Database.json)
-          echo "Replacing $key with $value"
-          sed -i "s|$key|$value|g" $TARGET_DIR/appsettings.json
-        done`,
+        'for key in $(jq -r \'keys[]\' Database.json); do value=$(jq -r --arg k "$key" \'.[$k]\' Database.json); echo "Replacing $key with $value"; sed -i "s|$key|$value|g" $TARGET_DIR/appsettings.json; done',
         'echo "✅ Final appsettings.json:"',
         'cat $TARGET_DIR/appsettings.json',
         'echo "✅ Building Docker image..."',
@@ -171,7 +166,7 @@ spec:
         service.name: "{{ pipeline_name }}"
         product: "{{ product }}"
     spec:
-      serviceAccountName: appmesh-comp
+      serviceAccountName: {{ service_account }}
       containers:
       - name: {{ pipeline_name }}
         image: {{ image }}

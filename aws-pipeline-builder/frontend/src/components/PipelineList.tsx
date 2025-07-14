@@ -296,20 +296,32 @@ const PipelineList: React.FC = () => {
     if (selectedPipelines.size === 0) return;
     
     try {
-      const deletePromises = Array.from(selectedPipelines).map(async (pipelineName) => {
+      const pipelineList = Array.from(selectedPipelines);
+      const results = [];
+      
+      // Delete pipelines sequentially to avoid CodeCommit race conditions
+      for (let i = 0; i < pipelineList.length; i++) {
+        const pipelineName = pipelineList[i];
+        
+        // Update progress notification
+        setSyncNotification(`🔄 Deleting pipeline ${i + 1} of ${pipelineList.length}: ${pipelineName}...`);
+        
         try {
           const response = await axios.delete(getApiUrl(`/api/pipelines/${pipelineName}/delete`));
-          return { pipelineName, success: true, response: response.data };
+          results.push({ pipelineName, success: true, response: response.data });
+          
+          // Add a small delay between deletions to ensure CodeCommit operations complete
+          if (i < pipelineList.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         } catch (error: any) {
-          return { 
+          results.push({ 
             pipelineName, 
             success: false, 
             error: error.response?.data?.error || error.message 
-          };
+          });
         }
-      });
-
-      const results = await Promise.all(deletePromises);
+      }
       
       // Create summary message
       const successful = results.filter(r => r.success);

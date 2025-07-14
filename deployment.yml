@@ -19,7 +19,7 @@ spec:
         service.name: "{{ pipeline_name }}"
         product: "{{ product }}"
     spec:
-      serviceAccountName: appmesh-comp
+      serviceAccountName: {{ service_account }}
       containers:
       - name: {{ pipeline_name }}
         image: {{ image }}
