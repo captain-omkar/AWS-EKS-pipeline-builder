@@ -279,45 +279,66 @@ def load_buildspec_template():
         buildspec_yaml = storage.get_template('buildspec')
         if buildspec_yaml is not None:
             print("✅ Loaded buildspec template from DynamoDB")
-            # Use ruamel.yaml to preserve order
-            from ruamel.yaml import YAML
-            yaml = YAML()
-            yaml.preserve_quotes = True
-            yaml.width = 4096  # Prevent line wrapping
-            
-            # Parse the YAML
-            buildspec = yaml.load(buildspec_yaml)
-            
-            if isinstance(buildspec, dict) and 'phases' in buildspec:
-                # Create a new dict with phases in correct order
-                from ruamel.yaml.comments import CommentedMap
-                ordered_buildspec = CommentedMap()
+            try:
+                # Use ruamel.yaml to preserve order
+                from ruamel.yaml import YAML
+                yaml = YAML()
+                yaml.preserve_quotes = True
+                yaml.width = 4096  # Prevent line wrapping
                 
-                # Add version first
-                if 'version' in buildspec:
-                    ordered_buildspec['version'] = buildspec['version']
+                # Parse the YAML
+                buildspec = yaml.load(buildspec_yaml)
                 
-                # Create ordered phases
-                ordered_phases = CommentedMap()
-                phase_order = ['install', 'pre_build', 'build', 'post_build']
-                for phase in phase_order:
-                    if phase in buildspec.get('phases', {}) and buildspec['phases'][phase]:
-                        ordered_phases[phase] = buildspec['phases'][phase]
+                if isinstance(buildspec, dict) and 'phases' in buildspec:
+                    # Create a new dict with phases in correct order
+                    from ruamel.yaml.comments import CommentedMap
+                    ordered_buildspec = CommentedMap()
+                    
+                    # Add version first
+                    if 'version' in buildspec:
+                        ordered_buildspec['version'] = buildspec['version']
+                    
+                    # Create ordered phases
+                    ordered_phases = CommentedMap()
+                    phase_order = ['install', 'pre_build', 'build', 'post_build']
+                    for phase in phase_order:
+                        if phase in buildspec.get('phases', {}) and buildspec['phases'][phase]:
+                            ordered_phases[phase] = buildspec['phases'][phase]
+                    
+                    ordered_buildspec['phases'] = ordered_phases
+                    
+                    # Add any other top-level keys
+                    for key in buildspec:
+                        if key not in ['version', 'phases']:
+                            ordered_buildspec[key] = buildspec[key]
+                    
+                    # Convert back to YAML string
+                    import io
+                    stream = io.StringIO()
+                    yaml.dump(ordered_buildspec, stream)
+                    buildspec_yaml = stream.getvalue()
+                    
+                return buildspec_yaml
                 
-                ordered_buildspec['phases'] = ordered_phases
-                
-                # Add any other top-level keys
-                for key in buildspec:
-                    if key not in ['version', 'phases']:
-                        ordered_buildspec[key] = buildspec[key]
-                
-                # Convert back to YAML string
-                import io
-                stream = io.StringIO()
-                yaml.dump(ordered_buildspec, stream)
-                buildspec_yaml = stream.getvalue()
-                
-            return buildspec_yaml
+            except ImportError:
+                # Fallback to standard yaml if ruamel.yaml is not available
+                print("⚠️ ruamel.yaml not available, using standard yaml (phase order may not be preserved)")
+                import yaml
+                buildspec = yaml.safe_load(buildspec_yaml)
+                if isinstance(buildspec, dict) and 'phases' in buildspec:
+                    # Create ordered phases using OrderedDict
+                    ordered_phases = OrderedDict()
+                    phase_order = ['install', 'pre_build', 'build', 'post_build']
+                    for phase in phase_order:
+                        if phase in buildspec['phases']:
+                            ordered_phases[phase] = buildspec['phases'][phase]
+                    buildspec['phases'] = ordered_phases
+                    # Convert back to YAML with preserved order
+                    buildspec_yaml = yaml.dump(buildspec, default_flow_style=False, sort_keys=False)
+                return buildspec_yaml
+            except Exception as e:
+                print(f"⚠️ Error processing buildspec with ruamel.yaml: {e}, returning original")
+                return buildspec_yaml
         
         # Fall back to file-based template
         try:

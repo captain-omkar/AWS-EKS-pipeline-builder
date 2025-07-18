@@ -537,6 +537,21 @@ July 18, 2025 - Fixed Pipeline Creation Error Handling:
 - RESULT: Failed pipeline creations now properly show error status with detailed error messages
 - VERIFICATION: Invalid pipeline names now correctly fail with appropriate error messages
 
+July 18, 2025 - Fixed Buildspec Phase Order Issue:
+-------------------------------------------------
+- ISSUE: Buildspec phases appeared in wrong order (build, install, post_build, pre_build) instead of correct AWS CodeBuild execution order
+- ROOT CAUSE: Python's yaml.safe_load() creates regular dict that doesn't preserve YAML key order
+- SYMPTOMS: CodeBuild shows phases in alphabetical order, potentially causing build failures if phases depend on each other
+- FIX APPLIED: 
+  1. Added ruamel.yaml==0.18.14 to requirements.txt for proper YAML order preservation
+  2. Updated load_buildspec_template() to use ruamel.yaml with CommentedMap (lines 282-341)
+  3. Added fallback mechanism to use standard yaml if ruamel.yaml is not available
+  4. Ensured phases are reordered to: install → pre_build → build → post_build
+  5. Set Flask JSON_SORT_KEYS=False to prevent key sorting (line 16)
+- RESULT: Buildspec YAML sent to CodeBuild now maintains correct phase execution order
+- VERIFICATION: Tested with multiple pipeline creations - phases appear in correct order in CodeBuild
+- DEPENDENCY: Requires ruamel.yaml library - automatically installed via requirements.txt
+
 Current Status: FULLY FUNCTIONAL & PRODUCTION READY
 ==================================================
 The application is now stable and ready for production use with complete
