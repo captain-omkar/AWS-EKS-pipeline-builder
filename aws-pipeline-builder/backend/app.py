@@ -13,6 +13,7 @@ from decimal import Decimal
 
 # Initialize Flask application with CORS support for cross-origin requests
 app = Flask(__name__)
+app.config['JSON_SORT_KEYS'] = False  # Preserve dict order in JSON responses
 
 # Load configuration
 CONFIG_PATH = os.environ.get('CONFIG_PATH', 'appsettings.json')
@@ -278,6 +279,44 @@ def load_buildspec_template():
         buildspec_yaml = storage.get_template('buildspec')
         if buildspec_yaml is not None:
             print("✅ Loaded buildspec template from DynamoDB")
+            # Use ruamel.yaml to preserve order
+            from ruamel.yaml import YAML
+            yaml = YAML()
+            yaml.preserve_quotes = True
+            yaml.width = 4096  # Prevent line wrapping
+            
+            # Parse the YAML
+            buildspec = yaml.load(buildspec_yaml)
+            
+            if isinstance(buildspec, dict) and 'phases' in buildspec:
+                # Create a new dict with phases in correct order
+                from ruamel.yaml.comments import CommentedMap
+                ordered_buildspec = CommentedMap()
+                
+                # Add version first
+                if 'version' in buildspec:
+                    ordered_buildspec['version'] = buildspec['version']
+                
+                # Create ordered phases
+                ordered_phases = CommentedMap()
+                phase_order = ['install', 'pre_build', 'build', 'post_build']
+                for phase in phase_order:
+                    if phase in buildspec.get('phases', {}) and buildspec['phases'][phase]:
+                        ordered_phases[phase] = buildspec['phases'][phase]
+                
+                ordered_buildspec['phases'] = ordered_phases
+                
+                # Add any other top-level keys
+                for key in buildspec:
+                    if key not in ['version', 'phases']:
+                        ordered_buildspec[key] = buildspec[key]
+                
+                # Convert back to YAML string
+                import io
+                stream = io.StringIO()
+                yaml.dump(ordered_buildspec, stream)
+                buildspec_yaml = stream.getvalue()
+                
             return buildspec_yaml
         
         # Fall back to file-based template
@@ -875,6 +914,7 @@ def create_pipelines():
                     continue
                 
                 print(f"✅ Validation passed. Creating pipeline: {pipeline_name}")
+                print(f"📋 use_buildspec_file: {use_buildspec_file}")
                 
                 # Create ECR repository
                 try:
@@ -886,6 +926,10 @@ def create_pipelines():
                     print(f"✅ Created ECR repository: {pipeline_name}")
                 except ecr.exceptions.RepositoryAlreadyExistsException:
                     print(f"⚠️ ECR repository {pipeline_name} already exists")
+                except Exception as e:
+                    # Catch all other ECR creation errors
+                    print(f"❌ Failed to create ECR repository {pipeline_name}: {str(e)}")
+                    raise Exception(f"ECR repository creation failed: {str(e)}")
                 
                 # Create S3 bucket for artifacts with simple naming
                 # Format: "{first_6_chars}-{timestamp}"
@@ -936,10 +980,12 @@ def create_pipelines():
                 # Prepare buildspec
                 if use_buildspec_file:
                     buildspec = buildspec_path
+                    print(f"📄 Using buildspec file: {buildspec_path}")
                 else:
                     # Load buildspec template from DynamoDB first, then fallback to file
                     # This ensures we use the master template from Settings modal
                     buildspec = load_buildspec_template()
+                    print(f"📄 Using buildspec template (first 500 chars):\n{buildspec[:500]}")
                 
                 # Create CodeBuild project
                 codebuild_project_name = f"{pipeline_name}-build"
@@ -987,6 +1033,10 @@ def create_pipelines():
                     print(f"✅ Created CodeBuild project: {codebuild_project_name}")
                 except codebuild.exceptions.ResourceAlreadyExistsException:
                     print(f"⚠️ CodeBuild project {codebuild_project_name} already exists")
+                except Exception as e:
+                    # Catch all other CodeBuild creation errors
+                    print(f"❌ Failed to create CodeBuild project {codebuild_project_name}: {str(e)}")
+                    raise Exception(f"CodeBuild creation failed: {str(e)}")
                 
                 # Create CodePipeline
                 pipeline = {
@@ -1082,6 +1132,10 @@ def create_pipelines():
                 except codepipeline.exceptions.PipelineNameInUseException:
                     print(f"⚠️ CodePipeline {pipeline_name} already exists")
                     pipeline_arn = f"arn:aws:codepipeline:{boto3.Session().region_name}:{boto3.client('sts').get_caller_identity()['Account']}:pipeline/{pipeline_name}"
+                except Exception as e:
+                    # Catch all other pipeline creation errors
+                    print(f"❌ Failed to create CodePipeline {pipeline_name}: {str(e)}")
+                    raise Exception(f"CodePipeline creation failed: {str(e)}")
                 
                 # Upload appsettings to CodeCommit if provided
                 appsettings_content = pipeline_config.get('appsettingsContent')
@@ -2887,6 +2941,16 @@ def get_buildspec_template():
                     ])
                 }
             
+        # Convert OrderedDict to regular dict with preserved order for JSON serialization
+        if isinstance(buildspec, dict) and 'phases' in buildspec and isinstance(buildspec['phases'], OrderedDict):
+            # Create a new dict with phases in the correct order
+            ordered_buildspec = {'version': buildspec.get('version', 0.2)}
+            ordered_buildspec['phases'] = {}
+            for phase in ['install', 'pre_build', 'build', 'post_build']:
+                if phase in buildspec['phases']:
+                    ordered_buildspec['phases'][phase] = buildspec['phases'][phase]
+            buildspec = ordered_buildspec
+        
         return jsonify({
             'success': True,
             'buildspec': buildspec
