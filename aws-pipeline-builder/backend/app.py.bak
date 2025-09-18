@@ -698,23 +698,22 @@ def rollback_pipeline_resources(created_resources, pipeline_name):
                 rollback_errors.append(f"Failed to delete ECR repository: {str(e)}")
         
         # Delete S3 bucket
-        # Skip S3 bucket deletion - we are using a shared bucket that should not be deleted
-        #         if created_resources.get('s3_bucket'):
-        #             try:
-        #                 s3_client = boto3.client('s3')
-        #                 # Delete all objects in bucket first
-        #                 try:
-        #                     objects = s3_client.list_objects_v2(Bucket=created_resources['s3_bucket'])
-        #                     if 'Contents' in objects:
-        #                         delete_keys = [{'Key': obj['Key']} for obj in objects['Contents']]
-        #                         s3_client.delete_objects(Bucket=created_resources['s3_bucket'], Delete={'Objects': delete_keys})
-        #                 except:
-        #                     pass  # Bucket might be empty
-        #                 
-        #                 s3_client.delete_bucket(Bucket=created_resources['s3_bucket'])
-        #                 print(f"🗑️ Deleted S3 bucket: {created_resources['s3_bucket']}")
-        #             except Exception as e:
-        #                 rollback_errors.append(f"Failed to delete S3 bucket: {str(e)}")
+        if created_resources.get('s3_bucket'):
+            try:
+                s3_client = boto3.client('s3')
+                # Delete all objects in bucket first
+                try:
+                    objects = s3_client.list_objects_v2(Bucket=created_resources['s3_bucket'])
+                    if 'Contents' in objects:
+                        delete_keys = [{'Key': obj['Key']} for obj in objects['Contents']]
+                        s3_client.delete_objects(Bucket=created_resources['s3_bucket'], Delete={'Objects': delete_keys})
+                except:
+                    pass  # Bucket might be empty
+                
+                s3_client.delete_bucket(Bucket=created_resources['s3_bucket'])
+                print(f"🗑️ Deleted S3 bucket: {created_resources['s3_bucket']}")
+            except Exception as e:
+                rollback_errors.append(f"Failed to delete S3 bucket: {str(e)}")
         
         # Note about CodeCommit files
         for file_info in created_resources.get('codecommit_files', []):
@@ -847,9 +846,8 @@ def create_pipelines():
             if validation_errors:
                 error_msg = f"Pipeline name validation failed: {'; '.join(validation_errors)}"
                 created_pipelines.append({
-                    'pipelineName': pipeline_name,
-                    'pipelineArn': None,
-                    'status': 'error',
+                    'name': pipeline_name,
+                    'success': False,
                     'error': error_msg
                 })
                 print(f"❌ {error_msg}")
@@ -929,9 +927,8 @@ def create_pipelines():
                 if existing_resources:
                     error_msg = f"Cannot create pipeline '{pipeline_name}'. The following resources already exist: " + ", ".join(existing_resources)
                     created_pipelines.append({
-                        'pipelineName': pipeline_name,
-                        'pipelineArn': None,
-                        'status': 'error',
+                        'name': pipeline_name,
+                        'success': False,
                         'error': error_msg
                     })
                     print(f"❌ {error_msg}")
@@ -955,26 +952,29 @@ def create_pipelines():
                     print(f"❌ Failed to create ECR repository {pipeline_name}: {str(e)}")
                     raise Exception(f"ECR repository creation failed: {str(e)}")
                 
-                # Use shared S3 bucket from configuration
-                s3_config = app_settings.get('s3', {})
-                bucket_name = s3_config.get('sharedBucketName')
+                # Create S3 bucket for artifacts with simple naming
+                # Format: "{first_6_chars}-{timestamp}"
+                truncated_name = pipeline_name[:6].lower().replace('_', '-').replace(' ', '')
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
                 
-                if not bucket_name:
-                    raise Exception("Shared S3 bucket name not configured in appsettings.json. Please set 's3.sharedBucketName' in configuration.")
+                bucket_name = f"{truncated_name}-{timestamp}"
+                print(f"Generated S3 bucket name: {bucket_name} (length: {len(bucket_name)})")
                 
-                print(f"Using shared S3 bucket: {bucket_name}")
-                
-                # Verify the shared bucket exists and is accessible
                 s3 = boto3.client('s3')
                 try:
-                    s3.head_bucket(Bucket=bucket_name)
-                    print(f"✅ Verified access to shared S3 bucket: {bucket_name}")
-                    # Note: We don't add bucket to created_resources since we're not creating it
-                except s3.exceptions.NoSuchBucket:
-                    raise Exception(f"Shared S3 bucket '{bucket_name}' does not exist. Please create it first.")
+                    region = boto3.Session().region_name
+                    if region == 'us-east-1':
+                        s3.create_bucket(Bucket=bucket_name)
+                    else:
+                        s3.create_bucket(
+                            Bucket=bucket_name,
+                            CreateBucketConfiguration={'LocationConstraint': region}
+                        )
+                    created_resources['s3_bucket'] = bucket_name
+                    print(f"✅ Created S3 bucket: {bucket_name}")
                 except Exception as e:
-                    raise Exception(f"Cannot access shared S3 bucket '{bucket_name}': {str(e)}")
-
+                    print(f"❌ Failed to create S3 bucket {bucket_name}: {str(e)}")
+                    raise Exception(f"Failed to create S3 bucket: {str(e)}")
                 
                 # Get defaults
                 defaults = pipeline_config.get('defaults', {})
@@ -1298,14 +1298,6 @@ def create_pipelines():
                 'warning': 'Partial failure'
             }), 207  # Multi-status
         else:
-            # Check if any pipelines were actually created
-            if len(created_pipelines) == 0:
-                return jsonify({
-                    'success': False,
-                    'pipelines': [],
-                    'message': "No pipelines were processed. Please check your input.",
-                    'error': 'No pipelines to create'
-                }), 400
             # All pipelines succeeded
             return jsonify({
                 'success': True,

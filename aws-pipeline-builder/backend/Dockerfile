@@ -33,5 +33,8 @@ EXPOSE 5000
 # Set environment variable for config path
 ENV CONFIG_PATH=/app/config/appsettings.json
 
+# Force Python to flush output immediately
+ENV PYTHONUNBUFFERED=1
+
 # Run the application
 CMD ["python", "app.py"]
