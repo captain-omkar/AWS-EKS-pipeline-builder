@@ -126,9 +126,9 @@ done`,
         'cat $TARGET_DIR/appsettings.json',
         'echo "✅ Building Docker image..."',
         // Build Docker image using service-specific Dockerfile
-        'docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .',
+        'docker build -t $SERVICE_NAME:version -f $TARGET_DIR/Dockerfile .',
         // Tag image with ECR repository URI and build-specific tag
-        'docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG'
+        'docker tag $SERVICE_NAME:version $ECR_REPO_URI:$IMAGE_TAG'
       ]
     },
     // Post-build phase - push image and deploy to Kubernetes
@@ -151,7 +151,7 @@ done`,
         // Configure kubectl for EKS cluster
         'aws eks update-kubeconfig --name $CLUSTER_NAME',
         // Update manifest with new image tag
-        'sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml',
+        'sed -i "s/version/$IMAGE_TAG/g" $SERVICE_NAME.yml',
         // Display manifests for verification
         'echo "✅ Applying manifests..."',
         'cat $SERVICE_NAME.yml',

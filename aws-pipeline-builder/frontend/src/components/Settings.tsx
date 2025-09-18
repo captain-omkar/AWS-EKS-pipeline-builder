@@ -121,8 +121,8 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
         'echo "✅ Final appsettings.json:"',
         'cat $TARGET_DIR/appsettings.json',
         'echo "✅ Building Docker image..."',
-        'docker build -t $SERVICE_NAME -f $TARGET_DIR/Dockerfile .',
-        'docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG'
+        'docker build -t $SERVICE_NAME:version -f $TARGET_DIR/Dockerfile .',
+        'docker tag $SERVICE_NAME:version $ECR_REPO_URI:$IMAGE_TAG'
       ]
     },
     post_build: {
@@ -137,7 +137,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
         'cd $MANIFEST_REPO/$SERVICE_NAME/',
         'ls',
         'aws eks update-kubeconfig --name $CLUSTER_NAME',
-        'sed -i "s/latest/$IMAGE_TAG/g" manifest.yml',
+        'sed -i "s/version/$IMAGE_TAG/g" manifest.yml',
         'echo "✅ Applying manifests..."',
         'cat manifest.yml',
         'kubectl apply -f manifest.yml'

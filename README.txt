@@ -552,8 +552,68 @@ July 18, 2025 - Fixed Buildspec Phase Order Issue:
 - VERIFICATION: Tested with multiple pipeline creations - phases appear in correct order in CodeBuild
 - DEPENDENCY: Requires ruamel.yaml library - automatically installed via requirements.txt
 
+September 18, 2025 - Shared S3 Bucket Implementation:
+---------------------------------------------------
+- REQUIREMENT: Use single shared S3 bucket for all new pipelines instead of creating individual buckets
+- IMPLEMENTATION: Modified bucket creation logic to use shared bucket from configuration
+- CONFIGURATION: Added S3 configuration in backend/appsettings.json:
+  ```json
+  "s3": {
+    "sharedBucketName": "test-pipeline-builder-tool-shared-artefact",
+    "bucketRegion": "ap-south-1"
+  }
+  ```
+- CHANGES MADE:
+  1. Backend app.py (lines 955-978): Replaced S3 bucket creation with shared bucket verification
+  2. Backend app.py (lines 701-716): Commented out S3 bucket deletion in rollback to preserve shared bucket
+  3. Backend Dockerfile: Added PYTHONUNBUFFERED=1 for improved Docker logging
+- BEHAVIOR:
+  - New pipelines: Use shared bucket "test-pipeline-builder-tool-shared-artefact"
+  - Existing pipelines: Continue using their individual S3 buckets (backward compatibility)
+  - Shared bucket must be pre-created in AWS before creating pipelines
+- VERIFICATION: Creates folder structure in shared bucket per pipeline
+
+September 18, 2025 - Fixed Pipeline Creation False Success:
+---------------------------------------------------------
+- ISSUE: Pipeline creation showed success even when no pipelines were actually created
+- ROOT CAUSE: Empty created_pipelines array returned 200 success response
+- FIX: Added validation to check if created_pipelines array is empty and return error
+- RESULT: Proper error message when pipeline creation fails
+
+September 18, 2025 - Fixed ECR_REPO_URI Corruption Bug:
+------------------------------------------------------
+- ISSUE: When editing pipelines, ECR_REPO_URI changed from correct format to "staging-repo/$pipeline-name"
+- ROOT CAUSE: update_codebuild_environment_variables incorrectly constructed ECR_REPO_URI from first env variable
+- SYMPTOMS: ECR_REPO_URI corrupted even without user modification during pipeline edits
+- FIX APPLIED: Modified update_codebuild_environment_variables (lines 2044-2074):
+  1. Preserve existing ECR_REPO_URI from CodeBuild project if not provided in update
+  2. Only set ECR_REPO_URI if not already present in update AND no existing value
+  3. Added debug logging to trace environment variable handling
+- RESULT: ECR_REPO_URI now correctly preserved during pipeline updates
+
+September 18, 2025 - Changed Docker Image Tagging from :latest to :version:
+--------------------------------------------------------------------------
+- REQUIREMENT: Replace "latest" tag with "version" in manifest files and buildspec
+- IMPLEMENTATION: Modified image tagging strategy across the application
+- CHANGES MADE:
+  1. Manifest Templates:
+     - Backend app.py: Changed image tag from `:latest` to `:version` in manifest generation
+     - Frontend manifestTemplate.ts: Changed image tag from `:latest` to `:version`
+  2. Buildspec Templates:
+     - Backend buildspec-template.yml: Changed sed command from `s/latest/$IMAGE_TAG/g` to `s/version/$IMAGE_TAG/g`
+     - Frontend buildspecTemplate.ts: Updated sed command to replace "version" with $IMAGE_TAG
+     - Frontend Settings.tsx: Updated default buildspec template with same sed change
+  3. Docker Commands:
+     - Build: `docker build -t $SERVICE_NAME` (builds with :latest tag by default)
+     - Tag: `docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG` (tags to ECR with timestamp)
+- BEHAVIOR:
+  - Manifests reference images as `ECR_URI:version`
+  - During build, sed replaces "version" with actual timestamp ($IMAGE_TAG)
+  - Final deployed images have timestamp tags instead of "latest"
+- RESULT: Proper versioning of Docker images with timestamps instead of static "latest" tag
+
 Current Status: FULLY FUNCTIONAL & PRODUCTION READY
 ==================================================
 The application is now stable and ready for production use with complete
-pipeline lifecycle management, robust error handling, and comprehensive
-feature set for AWS DevOps pipeline management.
+pipeline lifecycle management, robust error handling, comprehensive
+feature set for AWS DevOps pipeline management, and shared S3 bucket support.

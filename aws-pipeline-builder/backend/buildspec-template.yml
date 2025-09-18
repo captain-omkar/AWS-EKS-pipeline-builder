@@ -70,7 +70,7 @@ phases:
 
       - ls
       - aws eks update-kubeconfig --name $CLUSTER_NAME
-      - sed -i "s/latest/$IMAGE_TAG/g" $SERVICE_NAME.yml
+      - sed -i "s/version/$IMAGE_TAG/g" $SERVICE_NAME.yml
       
       - echo "✅ Applying manifests..."
       - cat $SERVICE_NAME.yml

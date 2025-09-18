@@ -428,7 +428,7 @@ spec:
     deployment_manifest = deployment_manifest.replace('{{ namespace }}', deployment_config.get('namespace', 'staging-locobuzz'))
     deployment_manifest = deployment_manifest.replace('{{ app_type }}', deployment_config.get('appType', 'csharp'))
     deployment_manifest = deployment_manifest.replace('{{ product }}', deployment_config.get('product', 'cmo'))
-    deployment_manifest = deployment_manifest.replace('{{ image }}', f'{ecr_uri}:latest')
+    deployment_manifest = deployment_manifest.replace('{{ image }}', f'{ecr_uri}:version')
     deployment_manifest = deployment_manifest.replace('{{ memory_limit }}', deployment_config.get('memoryLimit', '300Mi'))
     deployment_manifest = deployment_manifest.replace('{{ cpu_limit }}', deployment_config.get('cpuLimit', '300m'))
     deployment_manifest = deployment_manifest.replace('{{ memory_request }}', deployment_config.get('memoryRequest', '150Mi'))
@@ -1604,14 +1604,14 @@ def get_default_pipeline_settings():
                         "echo Build started on `date`",
                         "echo Building Docker image...",
                         "docker build -t $SERVICE_NAME .",
-                        "docker tag $SERVICE_NAME:latest $ECR_REPO_URI:latest"
+                        "docker tag $SERVICE_NAME:latest $ECR_REPO_URI:$IMAGE_TAG"
                     ]
                 },
                 "post_build": {
                     "commands": [
                         "echo Build completed on `date`",
                         "echo Pushing Docker image...",
-                        "docker push $ECR_REPO_URI:latest"
+                        "docker push $ECR_REPO_URI:$IMAGE_TAG"
                     ]
                 }
             }
@@ -2033,19 +2033,40 @@ def update_codebuild_environment_variables(pipeline_name, environment_variables)
         
         # Convert environment variables to CodeBuild format
         codebuild_env_vars = []
+        print(f"📋 Received environment variables from frontend: {environment_variables}")
         for env_var in environment_variables:
             if env_var.get('name') and env_var.get('value'):
+                print(f"  - Adding env var: {env_var['name']} = {env_var['value']}")
                 codebuild_env_vars.append({
                     'name': env_var['name'],
                     'value': env_var['value'],
                     'type': 'PLAINTEXT'
                 })
         
+        # Preserve existing ECR_REPO_URI if not provided in the update
+        existing_ecr_uri = None
+        print(f"🔍 Existing CodeBuild env vars:")
+        for var in project.get('environment', {}).get('environmentVariables', []):
+            print(f"  - {var.get('name')} = {var.get('value')}")
+            if var.get('name') == 'ECR_REPO_URI':
+                existing_ecr_uri = var.get('value')
+                print(f"  ✓ Found existing ECR_REPO_URI: {existing_ecr_uri}")
+                break
+        
+        # Check if ECR_REPO_URI is being provided in the update
+        has_ecr_uri = any(var['name'] == 'ECR_REPO_URI' for var in codebuild_env_vars)
+        
         # Add required environment variables if not present
         required_vars = {
-            'SERVICE_NAME': pipeline_name,
-            'ECR_REPO_URI': f"{project['environment']['environmentVariables'][0]['value'] if project['environment']['environmentVariables'] else '465105616690.dkr.ecr.ap-south-1.amazonaws.com'}/${pipeline_name}"
+            'SERVICE_NAME': pipeline_name
         }
+        
+        # Only set ECR_REPO_URI if it's not already present in the update AND we don't have an existing one
+        if not has_ecr_uri and not existing_ecr_uri:
+            required_vars['ECR_REPO_URI'] = f"465105616690.dkr.ecr.ap-south-1.amazonaws.com/{pipeline_name}"
+        elif not has_ecr_uri and existing_ecr_uri:
+            # Preserve the existing ECR_REPO_URI
+            required_vars['ECR_REPO_URI'] = existing_ecr_uri
         
         existing_var_names = {var['name'] for var in codebuild_env_vars}
         for name, value in required_vars.items():
