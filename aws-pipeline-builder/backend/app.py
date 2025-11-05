@@ -29,7 +29,7 @@ def get_aws_session():
     """Create AWS session with credential fallback logic"""
     app_settings = load_app_settings()
     aws_config = app_settings.get('aws', {})
-    region = aws_config.get('region', 'ap-south-1')
+    region = aws_config.get('region', 'us-east-1')
     credentials = aws_config.get('credentials', {})
     
     # Try explicit credentials first

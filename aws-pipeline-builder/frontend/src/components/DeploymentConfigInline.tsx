@@ -48,11 +48,11 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   const [loadingExistingManifest, setLoadingExistingManifest] = useState(false);
   const [manifestExists, setManifestExists] = useState(false);
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
-    namespaces: ['staging-devops', 'production-devops'],
+    namespaces: ['dev-namespace', 'prod-namespace'],
     appTypes: ['csharp', 'python', 'java', 'nodejs'],
-    products: ['cmo', 'modernization', 'newsverse'],
-    nodeGroups: ['cmo-nodegroup', 'modernization-nodegroup', 'newsverse-nodegroup'],
-    serviceAccounts: ['appmesh-comp', 'default', 'eks-service-account'],
+    products: ['product-a', 'product-b', 'product-c'],
+    nodeGroups: ['nodegroup-a', 'nodegroup-b', 'nodegroup-c'],
+    serviceAccounts: ['app-service-account', 'default', 'k8s-service-account'],
     memoryOptions: ['100Mi', '150Mi', '200Mi', '250Mi', '300Mi', '400Mi', '500Mi', '1Gi', '2Gi'],
     cpuOptions: ['100m', '150m', '200m', '250m', '300m', '400m', '500m', '1000m', '2000m']
   });

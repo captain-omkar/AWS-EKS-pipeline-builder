@@ -13,8 +13,8 @@ test_pipeline = {
         "useBuildspecFile": False,  # Use template instead of file
         "computeType": "BUILD_GENERAL1_SMALL",
         "environmentVariables": [
-            {"name": "MANIFEST_REPO", "value": "staging-repo"},
-            {"name": "APPSETTINGS_REPO", "value": "modernization-appsettings-repo"}
+            {"name": "MANIFEST_REPO", "value": "manifest-repository"},
+            {"name": "APPSETTINGS_REPO", "value": "appsettings-repository"}
         ]
     }]
 }
@@ -35,7 +35,7 @@ time.sleep(2)
 
 # Check the created project
 import boto3
-session = boto3.Session(region_name='ap-south-1')
+session = boto3.Session(region_name='us-east-1')
 codebuild = session.client('codebuild')
 
 try:

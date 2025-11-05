@@ -19,7 +19,7 @@
         "commands": [
           "echo Logging in to Amazon ECR...",
           "aws --version",
-          "aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY",
+          "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY",
           "export KUBECONFIG=$HOME/.kube/config",
           "aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query 'SecretString' --output text > Database.json"
         ]
@@ -38,7 +38,7 @@
           "export AWS_SESSION_TOKEN=\"$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')\"",
           "git config --global credential.helper '!aws codecommit credential-helper $@'",
           "git config --global credential.UseHttpPath true",
-          "git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO",
+          "git clone https://git-codecommit.$AWS_REGION.amazonaws.com/v1/repos/$APPSETTINGS_REPO",
           "cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/",
           "#- echo \"\u2705 Downloading appsettings.json from S3...\"",
           "#- aws s3 ls s3://eks-manifest-loco/appsettings/$SERVICE_NAME/",
@@ -62,7 +62,7 @@
           "echo \"$Repository_Name-$Branch_Name\"",
           "echo \"\u2705 Assume role for kubectl...\"",
           "echo \"oooooooooooooooo\"",
-          "git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO",
+          "git clone https://git-codecommit.$AWS_REGION.amazonaws.com/v1/repos/$MANIFEST_REPO",
           "cd $MANIFEST_REPO/$SERVICE_NAME/",
           "ls",
           "aws eks update-kubeconfig --name $CLUSTER_NAME",

@@ -94,7 +94,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
       commands: [
         'echo Logging in to Amazon ECR...',
         'aws --version',
-        'aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin $ECR_REGISTRY',
+        'aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY',
         'export KUBECONFIG=$HOME/.kube/config',
         'aws secretsmanager get-secret-value --secret-id $SECRET_CREDS --query \'SecretString\' --output text > Database.json'
       ]
@@ -113,7 +113,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
         'export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r \'.Credentials.SessionToken\')"',
         'git config --global credential.helper \'!aws codecommit credential-helper $@\'',
         'git config --global credential.UseHttpPath true',
-        'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$APPSETTINGS_REPO',
+        'git clone https://git-codecommit.$AWS_REGION.amazonaws.com/v1/repos/$APPSETTINGS_REPO',
         'cp $APPSETTINGS_REPO/$SERVICE_NAME/appsettings.json $TARGET_DIR/',
         'ls -R $TARGET_DIR',
         'echo "✅ Replacing placeholders dynamically..."',
@@ -133,7 +133,7 @@ const DEFAULT_BUILDSPEC_TEMPLATE = {
         'echo Writing image definitions file...',
         'echo "$Repository_Name-$Branch_Name"',
         'echo "✅ Assume role for kubectl..."',
-        'git clone https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/$MANIFEST_REPO',
+        'git clone https://git-codecommit.$AWS_REGION.amazonaws.com/v1/repos/$MANIFEST_REPO',
         'cd $MANIFEST_REPO/$SERVICE_NAME/',
         'ls',
         'aws eks update-kubeconfig --name $CLUSTER_NAME',
@@ -256,8 +256,8 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   
   // State for environment suggestions
   const [suggestions, setSuggestions] = useState<EnvSuggestions>({
-    SECRET_CREDS: ['Database', 'cmo-secrets', 'newzverse-secrets'],
-    APPSETTINGS_REPO: ['modernization-appsettings-repo'],
+    SECRET_CREDS: ['app-secrets', 'database-credentials'],
+    APPSETTINGS_REPO: ['appsettings-repository'],
     MANIFEST_REPO: [],
     CLUSTER_ROLE_ARN: [],
     DOCKER_REPO_DIR: []
@@ -268,12 +268,12 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   // State for pipeline settings - initialize deploymentOptions as undefined to match the type
   const [pipelineSettings, setPipelineSettings] = useState<PipelineSettings>({
     aws: {
-      region: 'ap-south-1',
-      accountId: '465105616690',
-      ecrRegistry: '465105616690.dkr.ecr.ap-south-1.amazonaws.com'
+      region: 'us-east-1',
+      accountId: '123456789012',
+      ecrRegistry: '123456789012.dkr.ecr.us-east-1.amazonaws.com'
     },
     codebuild: {
-      serviceRole: 'staging-codebuild-role',
+      serviceRole: 'codebuild-service-role',
       environmentType: 'LINUX_CONTAINER',
       environmentImage: 'aws/codebuild/amazonlinux-x86_64-standard:5.0',
       privilegedMode: true,
@@ -283,13 +283,13 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
       subnets: null
     },
     codepipeline: {
-      serviceRole: 'staging-codepipeline-role',
-      codestarConnectionName: 'github-connections',
+      serviceRole: 'codepipeline-service-role',
+      codestarConnectionName: 'github-connection',
       sourceProvider: 'CodeStarSourceConnection',
       buildProvider: 'CodeBuild'
     },
     eks: {
-      clusterName: 'Staging_cluster',
+      clusterName: 'my-eks-cluster',
       clusterRoleArn: null
     },
     buildspec: {}
@@ -312,14 +312,14 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   
   // State for deployment options
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
-    namespaces: ['staging-devops', 'production-devops'],
+    namespaces: ['dev-namespace', 'prod-namespace'],
     appTypes: ['csharp', 'python', 'java', 'nodejs'],
-    products: ['cmo', 'modernization', 'newsverse'],
-    nodeGroups: ['cmo-nodegroup', 'modernization-nodegroup', 'newsverse-nodegroup'],
-    serviceAccounts: ['appmesh-comp', 'default', 'eks-service-account'],
+    products: ['product-a', 'product-b', 'product-c'],
+    nodeGroups: ['nodegroup-a', 'nodegroup-b', 'nodegroup-c'],
+    serviceAccounts: ['app-service-account', 'default', 'k8s-service-account'],
     memoryOptions: ['100Mi', '150Mi', '200Mi', '250Mi', '300Mi', '400Mi', '500Mi', '1Gi', '2Gi'],
     cpuOptions: ['100m', '150m', '200m', '250m', '300m', '400m', '500m', '1000m', '2000m'],
-    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.staging.devops.com:9092'],
+    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.example.com:9092'],
     targetPortOptions: [80, 443, 3000, 3001, 4000, 5000, 5001, 8080, 8081, 8443, 9000, 9090]
   });
   

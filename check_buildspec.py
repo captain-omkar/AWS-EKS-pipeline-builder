@@ -2,7 +2,7 @@
 import boto3
 import yaml
 
-session = boto3.Session(region_name='ap-south-1')
+session = boto3.Session(region_name='us-east-1')
 codebuild = session.client('codebuild')
 
 try:

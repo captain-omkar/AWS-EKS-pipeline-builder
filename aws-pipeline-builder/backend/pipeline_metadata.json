@@ -14,15 +14,15 @@
         },
         {
           "name": "SECRET_CREDS",
-          "value": "Database"
+          "value": "app-secrets"
         },
         {
           "name": "APPSETTINGS_REPO",
-          "value": "modernization-appsettings-repo"
+          "value": "appsettings-repository"
         },
         {
           "name": "MANIFEST_REPO",
-          "value": "staging-repo"
+          "value": "manifest-repository"
         }
       ],
       "deploymentConfig": {
@@ -31,9 +31,9 @@
         "cpuRequest": "250m",
         "memoryLimit": "500Mi",
         "memoryRequest": "250Mi",
-        "namespace": "staging-locobuzz",
-        "nodeGroup": "modernization-nodegroup",
-        "product": "modernization"
+        "namespace": "dev-namespace",
+        "nodeGroup": "nodegroup-a",
+        "product": "product-a"
       },
       "scalingConfig": {
         "cpuThreshold": 80,
@@ -42,13 +42,13 @@
         "minPods": 1,
         "type": "hpa"
       },
-      "pipelineArn": "arn:aws:codepipeline:ap-south-1:465105616690:pipeline/omkar-v15",
+      "pipelineArn": "arn:aws:codepipeline:us-east-1:123456789012:pipeline/omkar-v15",
       "resources": {
         "pipeline": "omkar-v15",
         "codebuild": "omkar-v15-build",
         "ecrRepository": "omkar-v15",
-        "appsettingsRepo": "modernization-appsettings-repo",
-        "manifestRepo": "staging-repo"
+        "appsettingsRepo": "appsettings-repository",
+        "manifestRepo": "manifest-repository"
       },
       "lastUpdated": "2025-06-23T17:52:16.941301",
       "createdAt": "2025-06-23T13:49:36.432542"

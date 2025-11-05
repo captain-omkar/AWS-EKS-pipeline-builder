@@ -230,7 +230,7 @@ Deployment to Another Server:
    - Restrict CORS origins to specific domains
 
 5. Storage Requirements:
-   - DynamoDB table (auto-created): aws-pipeline-builder-metadata
+   - DynamoDB table (auto-created): pipeline-builder-metadata
    - Stores pipeline metadata only for pipelines created through this tool
    - AWS pipelines are listed directly from AWS APIs
 
@@ -268,11 +268,11 @@ Configuration:
 File Structure Created by Application:
 ------------------------------------
 CodeCommit Repositories:
-- modernization-appsettings-repo/
+- appsettings-repository/
   └── {pipeline-name}/
       └── appsettings.json
 
-- staging-repo/
+- manifest-repository/
   └── {pipeline-name}/
       ├── {pipeline-name}.yml (main deployment manifest)
       ├── {pipeline-name}-hpa.yml (HPA scaling - if configured)
