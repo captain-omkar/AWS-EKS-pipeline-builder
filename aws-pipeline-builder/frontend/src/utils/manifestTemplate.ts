@@ -120,7 +120,7 @@ spec:
 };
 
 export const getDefaultDeploymentConfig = (): DeploymentConfig => ({
-  namespace: 'staging-locobuzz',
+  namespace: 'staging-devops',
   serviceName: '',
   appType: 'csharp',
   product: 'cmo',

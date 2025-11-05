@@ -965,8 +965,8 @@ const PipelineForm: React.FC = () => {
     <div className="pipeline-form">
       {/* APPLICATION HEADER */}
       <div className="header">
-        <img src="/locobuzz-logo.jpeg" alt="Locobuzz Logo" />
-        <h1>Locobuzz Pipelines {isEditMode ? '- Edit Mode' : ''}</h1>
+        <img src="/logo.png" alt="DevOps Logo" style={{height: '60px', width: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #1976d2'}} />
+        <h1>DevOps Pipeline Builder {isEditMode ? '- Edit Mode' : ''}</h1>
       </div>
       
       {/* EDIT MODE INFO PANEL - Only visible when editing existing pipeline */}

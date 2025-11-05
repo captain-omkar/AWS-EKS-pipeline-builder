@@ -1,13 +1,13 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: hpa-locobuzzng
-  namespace: staging-locobuzz
+  name: hpa-devopsng
+  namespace: staging-devops
 spec: 
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: deployment-locobuzzng
+    name: deployment-devopsng
   minReplicas: 1
   maxReplicas: 3
   metrics:

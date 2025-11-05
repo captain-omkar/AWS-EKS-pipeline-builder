@@ -612,6 +612,41 @@ September 18, 2025 - Changed Docker Image Tagging from :latest to :version:
   - Final deployed images have timestamp tags instead of "latest"
 - RESULT: Proper versioning of Docker images with timestamps instead of static "latest" tag
 
+November 5, 2025 - Company Rebranding Update:
+-------------------------------------------
+- CHANGES: Updated company name and logo throughout the application
+- COMPANY NAME: Changed from "Locobuzz" to "DevOps Pipeline Builder"
+- LOGO: Replaced locobuzz-logo.jpeg with new DevOps-themed SVG logo
+- FILES UPDATED:
+  1. Frontend Components:
+     - PipelineForm.tsx: Updated header title and logo path
+     - LandingPage.tsx: Updated title to "DevOps Pipeline Builder"
+     - Settings.tsx: Updated default namespaces and bootstrap servers
+     - DeploymentConfigInline.tsx: Updated default namespaces
+     - ScalingConfig.tsx: Updated bootstrap server options
+     - manifestTemplate.ts: Updated default namespace
+  2. Backend Configuration:
+     - pipeline_settings.json: Updated namespaces and bootstrap servers
+  3. HTML/Public Files:
+     - index.html: Updated page title
+     - Deleted old locobuzz-logo.jpeg
+     - Created new logo.svg with DevOps-themed design
+  4. Sample YAML Files:
+     - hpa.yml: Updated namespace and deployment names
+     - kafka.yml: Updated namespace and bootstrap servers
+- LOGO DESIGN: Created custom SVG logo featuring:
+  - Blue circular background (#1976d2)
+  - DevOps infinity symbol
+  - Gear icons representing automation
+  - Pipeline flow arrows
+  - "DevOps Pipeline Builder" text
+- NAMESPACE UPDATES:
+  - staging-locobuzz → staging-devops
+  - production-locobuzz → production-devops
+- BOOTSTRAP SERVER UPDATES:
+  - Replaced Locobuzz-specific Kafka URLs with generic examples
+  - kafka.staging.locobuzz.com → kafka.staging.devops.com
+
 Current Status: FULLY FUNCTIONAL & PRODUCTION READY
 ==================================================
 The application is now stable and ready for production use with complete

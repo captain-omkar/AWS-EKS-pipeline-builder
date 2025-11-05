@@ -2,7 +2,7 @@ apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
   name: model-scaledobject
-  namespace: staging-locobuzz
+  namespace: staging-devops
   labels:
     deploymentName: deployment-modelbinder
 spec:
@@ -16,7 +16,7 @@ spec:
     - type: kafka
       metadata:
         consumerGroup: maprawdata-realtime-consumer-group
-        bootstrapServers: b-1.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092,b-2.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092
+        bootstrapServers: kafka-broker1:9092,kafka-broker2:9092
         topic: RawStream_Realtime
         lagThreshold: "100"
         offsetResetPolicy: latest

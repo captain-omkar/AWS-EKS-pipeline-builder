@@ -312,14 +312,14 @@ const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   
   // State for deployment options
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
-    namespaces: ['staging-locobuzz', 'production-locobuzz'],
+    namespaces: ['staging-devops', 'production-devops'],
     appTypes: ['csharp', 'python', 'java', 'nodejs'],
     products: ['cmo', 'modernization', 'newsverse'],
     nodeGroups: ['cmo-nodegroup', 'modernization-nodegroup', 'newsverse-nodegroup'],
     serviceAccounts: ['appmesh-comp', 'default', 'eks-service-account'],
     memoryOptions: ['100Mi', '150Mi', '200Mi', '250Mi', '300Mi', '400Mi', '500Mi', '1Gi', '2Gi'],
     cpuOptions: ['100m', '150m', '200m', '250m', '300m', '400m', '500m', '1000m', '2000m'],
-    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.staging.locobuzz.com:9092'],
+    bootstrapServers: ['kafka-broker1:9092,kafka-broker2:9092', 'localhost:9092', 'kafka.staging.devops.com:9092'],
     targetPortOptions: [80, 443, 3000, 3001, 4000, 5000, 5001, 8080, 8081, 8443, 9000, 9090]
   });
   

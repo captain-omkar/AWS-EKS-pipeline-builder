@@ -1,8 +1,8 @@
 {
   "aws": {
-    "accountId": "465105616690",
-    "ecrRegistry": "465105616690.dkr.ecr.ap-south-1.amazonaws.com",
-    "region": "ap-south-1"
+    "accountId": "",
+    "ecrRegistry": "",
+    "region": ""
   },
   "buildspec": {
     "version": 0.2,
@@ -83,23 +83,20 @@
     "environmentType": "LINUX_CONTAINER",
     "imagePullCredentialsType": "CODEBUILD",
     "privilegedMode": true,
-    "securityGroup": "sg-0607b128992bab5f1",
-    "serviceRole": "staging-serviceNGapi-codebuild-role",
-    "subnets": [
-      "subnet-007a254219b4bcda9",
-      "subnet-012c070cded403c22"
-    ],
-    "vpcId": "vpc-056dc807b85acec1f"
+    "securityGroup": "",
+    "serviceRole": "",
+    "subnets": [],
+    "vpcId": ""
   },
   "codepipeline": {
     "buildProvider": "CodeBuild",
-    "codestarConnectionName": "github-connections",
-    "serviceRole": "staging-codepipeline-role",
+    "codestarConnectionName": "",
+    "serviceRole": "",
     "sourceProvider": "CodeStarSourceConnection"
   },
   "eks": {
-    "clusterName": "Staging_cluster",
-    "clusterRoleArn": "arn:aws:iam::465105616690:role/staging_ekscluster_role"
+    "clusterName": "",
+    "clusterRoleArn": ""
   },
   "deploymentOptions": {
     "appTypes": [
@@ -109,7 +106,7 @@
       "nodejs"
     ],
     "bootstrapServers": [
-      "b-1.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092,b-2.locobuzzuatmskcluster.4psd4m.c3.kafka.ap-south-1.amazonaws.com:9092"
+      "kafka-broker1:9092,kafka-broker2:9092"
     ],
     "cpuOptions": [
       "100m",
@@ -133,26 +130,10 @@
       "1Gi",
       "2Gi"
     ],
-    "namespaces": [
-      "staging-locobuzz",
-      "production-locobuzz",
-      "om"
-    ],
-    "nodeGroups": [
-      "cmo-nodegroup",
-      "modernization-nodegroup",
-      "newsverse-nodegroup"
-    ],
-    "products": [
-      "cmo",
-      "modernization",
-      "newsverse"
-    ],
-    "serviceAccounts": [
-      "appmesh-comp",
-      "default",
-      "eks-service-account"
-    ],
+    "namespaces": [],
+    "nodeGroups": [],
+    "products": [],
+    "serviceAccounts": [],
     "targetPortOptions": [
       80,
       443,

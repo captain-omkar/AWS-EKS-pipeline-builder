@@ -7,7 +7,18 @@
       "Bash(cat:*)",
       "Bash(aws ec2 describe-instances:*)",
       "Bash(aws logs:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(rm:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker rmi:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(cp:*)",
+      "Bash(docker logs:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

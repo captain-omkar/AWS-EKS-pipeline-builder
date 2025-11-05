@@ -42,7 +42,7 @@ const ScalingConfig: React.FC<ScalingConfigProps> = ({
   const [bootstrapServerOptions, setBootstrapServerOptions] = useState<string[]>([
     'kafka-broker1:9092,kafka-broker2:9092',
     'localhost:9092',
-    'kafka.staging.locobuzz.com:9092'
+    'kafka.staging.devops.com:9092'
   ]);
   
   // HPA State

@@ -7,7 +7,7 @@ const LandingPage: React.FC = () => {
   return (
     <div className="landing-page">
       <div className="landing-header">
-        <h1>LocoBuzz Pipeline Builder</h1>
+        <h1>DevOps Pipeline Builder</h1>
         <p className="landing-subtitle">Create and manage your CI/CD pipelines with ease</p>
       </div>
 

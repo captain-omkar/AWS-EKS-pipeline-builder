@@ -48,7 +48,7 @@ const DeploymentConfigInline: React.FC<DeploymentConfigInlineProps> = ({
   const [loadingExistingManifest, setLoadingExistingManifest] = useState(false);
   const [manifestExists, setManifestExists] = useState(false);
   const [deploymentOptions, setDeploymentOptions] = useState<DeploymentOptions>({
-    namespaces: ['staging-locobuzz', 'production-locobuzz'],
+    namespaces: ['staging-devops', 'production-devops'],
     appTypes: ['csharp', 'python', 'java', 'nodejs'],
     products: ['cmo', 'modernization', 'newsverse'],
     nodeGroups: ['cmo-nodegroup', 'modernization-nodegroup', 'newsverse-nodegroup'],
